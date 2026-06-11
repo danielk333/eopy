@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eopy"
+version = "0.1.0"
+description = "Fast Python Earth orbit propagation kernels with NumPy/SciPy"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "pymsis>=0.12",
+    "scipy>=1.11",
+    "spacecoords>=0.2.2",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
