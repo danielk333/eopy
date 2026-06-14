@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Sequence
 
 import numpy as np
 
 from .atmosphere import AtmosphereConfig, SolarActivity, density_dtm2000_like, density_msis_like
 from .constants import EARTH_OMEGA
 from .gravity import GravityField, gravity_acceleration
-from .integrators import Dop853Options, integrate_dop853
+from .integrators import Dop853Options, Event, integrate_dop853
 from .radiation import RadiationPressure, solar_radiation_pressure_acceleration
+from .third_body import ThirdBody, third_body_acceleration
 
 
 @dataclass(slots=True)
@@ -67,6 +68,7 @@ def make_rhs(
     activity: SolarActivity | None = None,
     radiation: RadiationPressure | None = None,
     sun_position: Callable[[float], np.ndarray] | np.ndarray | None = None,
+    third_bodies: ThirdBody | Sequence[ThirdBody] | None = None,
     extra_acceleration: Callable[[float, np.ndarray, np.ndarray], np.ndarray] | None = None,
 ) -> Callable[[float, np.ndarray], np.ndarray]:
     props = SpacecraftProperties() if spacecraft is None else spacecraft
@@ -84,6 +86,8 @@ def make_rhs(
                 raise ValueError("sun_position is required when radiation is enabled")
             sun = sun_position(t) if callable(sun_position) else sun_position
             acc = acc + solar_radiation_pressure_acceleration(position, sun, radiation)
+        if third_bodies is not None:
+            acc = acc + third_body_acceleration(position, t, third_bodies)
         if extra_acceleration is not None:
             acc = acc + extra_acceleration(t, position, velocity)
         dydt = np.empty_like(y)
@@ -105,15 +109,16 @@ def propagate(
     activity: SolarActivity | None = None,
     radiation: RadiationPressure | None = None,
     sun_position: Callable[[float], np.ndarray] | np.ndarray | None = None,
+    third_bodies: ThirdBody | Sequence[ThirdBody] | None = None,
     options: Dop853Options | None = None,
     return_history: bool = False,
+    events: Event | Sequence[Event] | None = None,
     extra_acceleration: Callable[[float, np.ndarray, np.ndarray], np.ndarray] | None = None,
 ):
     """Propagate one state ``(6,)`` or many states ``(N, 6)``.
 
-    TODO: add third-body gravity, solid/ocean tides, relativity, conical
-    penumbra, maneuvers, covariance/STM propagation, event detection and
-    Orekit-grade frame/time-scale handling.
+    TODO: add solid/ocean tides, relativity, conical penumbra, maneuvers,
+    covariance/STM propagation and Orekit-grade frame/time-scale handling.
     """
 
     state, single = _as_batch_state(state0)
@@ -124,9 +129,10 @@ def propagate(
         activity=activity,
         radiation=radiation,
         sun_position=sun_position,
+        third_bodies=third_bodies,
         extra_acceleration=extra_acceleration,
     )
-    result = integrate_dop853(rhs, t0, state, t1, options=options, return_history=return_history)
+    result = integrate_dop853(rhs, t0, state, t1, options=options, return_history=return_history, events=events)
     if return_history:
         ts, ys, stats = result
         if single:

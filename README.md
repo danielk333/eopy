@@ -1,8 +1,8 @@
 # eopy
 
-Earth orbits in Python: a compact, fast propagation kernel designed around
+Earth orbits in Python: a compact, fast propagation designed around
 NumPy arrays and function calls so computationally heavy pieces can later move
-to C++ without changing the public shape of the code.
+to low level implementations without changing the public shape of the code.
 
 ## What is implemented
 
@@ -14,6 +14,11 @@ to C++ without changing the public shape of the code.
 - DTM2000-like density hook and MSIS density through `pymsis`.
 - Drag acceleration with co-rotating atmosphere and ballistic coefficient input.
 - Isotropic solar radiation pressure with cylindrical Earth shadowing.
+- Point-mass third-body perturbations with fixed or callable position providers,
+  including a lazy Astropy-backed ephemeris helper.
+- Basic propagation events through SciPy-compatible callables, with helpers for
+  altitude crossing and cylindrical eclipse boundaries.
+- Frame/time helper wrappers that centralize `spacecoords` and `astropy` usage.
 
 The DTM2000 and high-degree Holmes-Featherstone paths are intentionally
 marked with TODOs where Orekit uses large empirical datasets, frame handling and
@@ -45,3 +50,6 @@ t, propagated, stats = propagate(
     options=Dop853Options(rtol=1e-10, atol=1e-3, max_step=60.0),
 )
 ```
+
+More runnable examples live in `examples/` and are covered by pytest so they
+stay synchronized with the public API.

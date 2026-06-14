@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Sequence
 
 import numpy as np
 from scipy.integrate import solve_ivp
@@ -28,6 +28,11 @@ class Dop853Stats:
     function_evals: int
     status: int
     message: str
+    event_times: tuple[Array, ...] | None = None
+    event_states: tuple[Array, ...] | None = None
+
+
+Event = Callable[[float, Array], float]
 
 
 def integrate_dop853(
@@ -38,6 +43,7 @@ def integrate_dop853(
     *,
     options: Dop853Options | None = None,
     return_history: bool = False,
+    events: Event | Sequence[Event] | None = None,
 ) -> tuple[float, Array, Dop853Stats] | tuple[Array, Array, Dop853Stats]:
     """Integrate ``y' = fun(t, y)`` with SciPy's ``solve_ivp`` DOP853.
 
@@ -52,6 +58,21 @@ def integrate_dop853(
     def flat_fun(t: float, y_flat: Array) -> Array:
         return np.asarray(fun(t, y_flat.reshape(shape)), dtype=float).reshape(-1)
 
+    wrapped_events = None
+    if events is not None:
+        event_list = [events] if callable(events) else list(events)
+        wrapped_events = []
+        for event in event_list:
+
+            def flat_event(t: float, y_flat: Array, event: Event = event) -> float:
+                return float(event(t, y_flat.reshape(shape)))
+
+            if hasattr(event, "terminal"):
+                flat_event.terminal = event.terminal
+            if hasattr(event, "direction"):
+                flat_event.direction = event.direction
+            wrapped_events.append(flat_event)
+
     kwargs = {
         "method": "DOP853",
         "rtol": opts.rtol,
@@ -61,9 +82,17 @@ def integrate_dop853(
     if opts.first_step is not None:
         kwargs["first_step"] = opts.first_step
 
+    if wrapped_events is not None:
+        kwargs["events"] = wrapped_events
     solution = solve_ivp(flat_fun, (float(t0), float(t1)), y0_arr.reshape(-1), **kwargs)
     if not solution.success:
         raise RuntimeError(solution.message)
+
+    event_times = None
+    event_states = None
+    if events is not None:
+        event_times = tuple(np.asarray(t) for t in solution.t_events)
+        event_states = tuple(np.asarray(y).reshape((-1,) + shape) for y in solution.y_events)
 
     stats = Dop853Stats(
         accepted_steps=max(0, solution.t.size - 1),
@@ -71,6 +100,8 @@ def integrate_dop853(
         function_evals=solution.nfev,
         status=solution.status,
         message=solution.message,
+        event_times=event_times,
+        event_states=event_states,
     )
     if return_history:
         ys = np.moveaxis(solution.y, 1, 0).reshape((solution.t.size,) + shape)

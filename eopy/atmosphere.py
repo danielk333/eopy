@@ -12,9 +12,9 @@ from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pymsis
-from spacecoords import frames
 
 from .constants import EARTH_RADIUS
+from .frames import ecef_to_geodetic_wgs84
 
 
 @dataclass(slots=True)
@@ -78,7 +78,7 @@ def density_msis_like(position_m: np.ndarray, activity: SolarActivity | None = N
     single = r.ndim == 1
     if single:
         r = r[None, :]
-    lats, lons, alts_m = frames.ecef_to_geodetic_wgs84(r[:, 0], r[:, 1], r[:, 2], degrees=True)
+    lats, lons, alts_m = ecef_to_geodetic_wgs84(r, degrees=True)
     alts_km = np.clip(alts_m, cfg.min_altitude_m, cfg.max_altitude_m) / 1000.0
     epoch = cfg.epoch.astimezone(timezone.utc).replace(tzinfo=None)
     dates = [epoch + timedelta(seconds=0.0)] * r.shape[0]
