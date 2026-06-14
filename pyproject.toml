@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
+requires = ["scikit-build-core>=0.10", "setuptools>=68"]
+build-backend = "scikit_build_core.build"
 
 [project]
 name = "eopy"
@@ -19,6 +19,10 @@ dependencies = [
 
 [project.optional-dependencies]
 examples = ["matplotlib>=3.8"]
+
+[tool.scikit-build]
+wheel.packages = ["eopy"]
+cmake.version = ">=3.18"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

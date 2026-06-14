@@ -15,6 +15,7 @@ import numpy as np
 from scipy.special import lpmv
 
 from .constants import EARTH_J2, EARTH_MU, EARTH_RADIUS
+from .data import GravityModel
 
 
 @dataclass(slots=True)
@@ -28,6 +29,23 @@ class GravityField:
     s: np.ndarray | None = None
     normalized: bool = False
     use_finite_difference_harmonics: bool = False
+    model: GravityModel | None = None
+    backend: str = "auto"
+
+    @classmethod
+    def from_model(cls, model: GravityModel, *, degree: int | None = None, order: int | None = None, backend: str = "auto") -> "GravityField":
+        return cls(
+            mu=model.mu,
+            reference_radius=model.reference_radius,
+            j2=0.0,
+            degree=model.max_degree if degree is None else degree,
+            order=model.max_order if order is None else order,
+            c=model.c,
+            s=model.s,
+            normalized=model.normalized,
+            model=model,
+            backend=backend,
+        )
 
 
 def _as_batch_position(position_m: np.ndarray) -> tuple[np.ndarray, bool]:
@@ -120,6 +138,38 @@ def gravity_acceleration(position_m: np.ndarray, field: GravityField | None = No
     """
 
     gf = GravityField() if field is None else field
+    degree = min(gf.degree, gf.c.shape[0] - 1) if gf.c is not None else gf.degree
+    order = min(gf.order, degree, gf.c.shape[1] - 1) if gf.c is not None else min(gf.order, degree)
+    if gf.c is not None and (gf.model is not None or gf.use_finite_difference_harmonics):
+        if gf.backend in {"auto", "native"}:
+            try:
+                from .native import NativeUnavailableError, holmes_featherstone_acceleration
+
+                return holmes_featherstone_acceleration(
+                    position_m,
+                    degree=degree,
+                    order=order,
+                    c=gf.c,
+                    s=gf.s,
+                    mu=gf.mu,
+                    reference_radius=gf.reference_radius,
+                    normalized=gf.normalized,
+                )
+            except NativeUnavailableError:
+                if gf.backend == "native":
+                    raise
+        if gf.normalized:
+            raise NotImplementedError("normalized spherical harmonics require the native gravity backend")
+        return _harmonic_accel_fd(position_m, gf)
+
+    if gf.backend in {"auto", "native"}:
+        try:
+            from .native import NativeUnavailableError, central_j2_acceleration
+
+            return central_j2_acceleration(position_m, gf.mu, gf.reference_radius, gf.j2)
+        except NativeUnavailableError:
+            if gf.backend == "native":
+                raise
     acc = central_gravity(position_m, gf.mu)
     if gf.j2 and gf.degree >= 2:
         acc = acc + j2_acceleration(position_m, gf.mu, gf.reference_radius, gf.j2)
