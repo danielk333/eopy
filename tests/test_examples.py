@@ -1,8 +1,7 @@
-import importlib
 import hashlib
+import importlib
 
 import numpy as np
-
 
 EXAMPLES = [
     "examples.two_body_orbit",
@@ -52,7 +51,9 @@ def test_native_gravity_example_runs_with_local_gfc(tmp_path):
         ),
         encoding="utf-8",
     )
-    result = importlib.import_module("examples.native_gravity_model").run(gfc, degree=0, order=0, backend="python", duration_s=60.0)
+    result = importlib.import_module("examples.native_gravity_model").run(
+        gfc, degree=0, order=0, backend="python", duration_s=60.0
+    )
 
     assert result["model_name"] == "tiny"
     assert np.all(np.isfinite(result["states"]))
@@ -64,7 +65,9 @@ def test_download_data_files_example_writes_to_target_folder(tmp_path):
     source.write_text("example gravity\n", encoding="utf-8")
     expected_hash = hashlib.sha256(source.read_bytes()).hexdigest()
 
-    result = importlib.import_module("examples.download_data_files").download_requested_files(
+    result = importlib.import_module(
+        "examples.download_data_files"
+    ).download_requested_files(
         tmp_path / "target",
         gravity_url=source.as_uri(),
         gravity_filename="tiny.gfc",

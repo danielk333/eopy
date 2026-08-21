@@ -53,7 +53,12 @@ def test_two_body_energy_and_angular_momentum_are_conserved():
     )
 
     np.testing.assert_allclose(_energy(states), _energy(state0), rtol=0.0, atol=2e-5)
-    np.testing.assert_allclose(_angular_momentum_norm(states), _angular_momentum_norm(state0), rtol=0.0, atol=0.2)
+    np.testing.assert_allclose(
+        _angular_momentum_norm(states),
+        _angular_momentum_norm(state0),
+        rtol=0.0,
+        atol=0.2,
+    )
 
 
 def test_batch_propagation_matches_individual_propagation():
@@ -100,10 +105,20 @@ def test_j2_acceleration_matches_closed_form_reference_points():
     x, y, z = positions.T
     r2 = np.sum(positions * positions, axis=1)
     z2_r2 = z * z / r2
-    factor = 1.5 * GravityField().j2 * EARTH_MU * EARTH_RADIUS**2 / (r2 * r2 * np.sqrt(r2))
-    expected = np.column_stack((factor * x * (5.0 * z2_r2 - 1.0), factor * y * (5.0 * z2_r2 - 1.0), factor * z * (5.0 * z2_r2 - 3.0)))
+    factor = (
+        1.5 * GravityField().j2 * EARTH_MU * EARTH_RADIUS**2 / (r2 * r2 * np.sqrt(r2))
+    )
+    expected = np.column_stack(
+        (
+            factor * x * (5.0 * z2_r2 - 1.0),
+            factor * y * (5.0 * z2_r2 - 1.0),
+            factor * z * (5.0 * z2_r2 - 3.0),
+        )
+    )
 
-    np.testing.assert_allclose(j2_acceleration(positions), expected, rtol=1e-15, atol=0.0)
+    np.testing.assert_allclose(
+        j2_acceleration(positions), expected, rtol=1e-15, atol=0.0
+    )
 
 
 def test_drag_propagation_reduces_specific_orbital_energy():
@@ -116,7 +131,13 @@ def test_drag_propagation_reduces_specific_orbital_energy():
         0.0,
         900.0,
         spacecraft=SpacecraftProperties(ballistic_coefficient_m2_per_kg=0.06),
-        atmosphere=AtmosphereConfig(model="dtm2000", rho_ref=5e-10, h_ref_m=260_000.0, scale_height_m=70_000.0, co_rotate=False),
+        atmosphere=AtmosphereConfig(
+            model="dtm2000",
+            rho_ref=5e-10,
+            h_ref_m=260_000.0,
+            scale_height_m=70_000.0,
+            co_rotate=False,
+        ),
         activity=SolarActivity(f10=180.0, f10_mean=170.0, ap=10.0),
         options=Dop853Options(rtol=1e-10, atol=1e-4, max_step=30.0),
     )

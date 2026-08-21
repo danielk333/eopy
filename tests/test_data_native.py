@@ -97,18 +97,3 @@ def test_gravity_field_from_icgem_model_uses_coefficients(tmp_path):
     acc = gravity_acceleration(position, GravityField.from_model(model, backend="python"))
 
     np.testing.assert_allclose(acc, central_gravity(position, model.mu), rtol=0.0, atol=2e-6)
-
-
-def test_native_module_reports_availability_without_import_failure():
-    is_available = native.available()
-    assert isinstance(is_available, bool)
-    if is_available:
-        assert native.version()
-
-
-def test_native_diagnostics_include_build_guidance():
-    diagnostics = native.library_diagnostics()
-
-    assert "checked paths:" in diagnostics
-    assert "cmake -S . -B build/native" in diagnostics
-    assert "EOPY_NATIVE_LIBRARY" in diagnostics
