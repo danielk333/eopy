@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
 import hashlib
 import os
 import tempfile
+from dataclasses import dataclass
+from pathlib import Path
 from urllib.request import urlopen
 
 import numpy as np
-
 
 DEFAULT_URLS = {
     "gravity_icgem_eigen_6s4_v2": "https://icgem.gfz.de/getmodel/gfc/4cc119d62d3f83adce857914bcabdfa7ca2f91677ed2905934cf52698584b4c9/EIGEN-6S4%20(v2).gfc",

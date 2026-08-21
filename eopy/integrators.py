@@ -8,7 +8,6 @@ from typing import Callable, Sequence
 import numpy as np
 from scipy.integrate import solve_ivp
 
-
 Array = np.ndarray
 Rhs = Callable[[float, Array], Array]
 

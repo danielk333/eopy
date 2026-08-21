@@ -8,7 +8,6 @@ import numpy as np
 
 from .constants import EARTH_RADIUS
 
-
 Event = Callable[[float, np.ndarray], float]
 
 

@@ -7,7 +7,12 @@ from typing import Callable, Sequence
 
 import numpy as np
 
-from .atmosphere import AtmosphereConfig, SolarActivity, density_dtm2000_like, density_msis_like
+from .atmosphere import (
+    AtmosphereConfig,
+    SolarActivity,
+    density_dtm2000_like,
+    density_msis_like,
+)
 from .constants import EARTH_OMEGA
 from .gravity import GravityField, gravity_acceleration
 from .integrators import Dop853Options, Event, integrate_dop853

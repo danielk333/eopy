@@ -143,7 +143,10 @@ def gravity_acceleration(position_m: np.ndarray, field: GravityField | None = No
     if gf.c is not None and (gf.model is not None or gf.use_finite_difference_harmonics):
         if gf.backend in {"auto", "native"}:
             try:
-                from .native import NativeUnavailableError, holmes_featherstone_acceleration
+                from .native import (
+                    NativeUnavailableError,
+                    holmes_featherstone_acceleration,
+                )
 
                 return holmes_featherstone_acceleration(
                     position_m,

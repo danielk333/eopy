@@ -8,7 +8,6 @@ from typing import Callable
 
 import numpy as np
 
-
 PositionProvider = Callable[[float], np.ndarray]
 
 

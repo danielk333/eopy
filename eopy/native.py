@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from ctypes import CDLL, POINTER, c_char_p, c_double, c_int, c_size_t
-from pathlib import Path
+import os
 import sys
 import sysconfig
-import os
+from ctypes import CDLL, POINTER, c_char_p, c_double, c_int, c_size_t
+from pathlib import Path
 
 import numpy as np
 
