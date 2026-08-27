@@ -7,6 +7,9 @@ from datetime import datetime
 from typing import Callable
 
 import numpy as np
+from scipy.interpolate import CubicSpline
+
+from .profiling import PropagationProfile
 
 PositionProvider = Callable[[float], np.ndarray]
 
@@ -69,3 +72,71 @@ def astropy_geocentric_body_provider(body: str, epoch: datetime) -> PositionProv
         return (body_pos.xyz - earth_pos.xyz).to_value(u.m)
 
     return provider
+
+
+def interpolated_astropy_body_providers(
+    bodies: tuple[str, ...] | list[str],
+    epoch: datetime,
+    t0: float,
+    t1: float,
+    *,
+    spacing_s: float = 300.0,
+    profile: PropagationProfile | None = None,
+) -> dict[str, PositionProvider]:
+    """Precompute geocentric body positions over propagation bounds.
+
+    Astropy evaluates all requested epochs in one vectorized operation. Cubic
+    splines then provide inexpensive positions in the propagator's GCRS-aligned
+    inertial axes. The bounds are inclusive and extrapolation is disabled.
+    """
+
+    if t1 <= t0:
+        raise ValueError("t1 must be greater than t0")
+    if spacing_s <= 0.0:
+        raise ValueError("spacing_s must be positive")
+
+    from astropy import units as u
+    from astropy.coordinates import get_body_barycentric_posvel
+    from astropy.time import Time, TimeDelta
+
+    sample_times = np.arange(float(t0), float(t1), float(spacing_s))
+    sample_times = np.append(sample_times, float(t1))
+    epochs = Time(epoch) + TimeDelta(sample_times, format="sec")
+
+    setup_measure = profile.measure("ephemeris_setup") if profile is not None else _null_measure()
+    with setup_measure:
+        earth_position, _ = get_body_barycentric_posvel("earth", epochs)
+        splines = {}
+        for body in bodies:
+            body_position, _ = get_body_barycentric_posvel(body, epochs)
+            positions_m = (body_position.xyz - earth_position.xyz).to_value(u.m).T
+            splines[body] = CubicSpline(sample_times, positions_m, axis=0, extrapolate=False)
+
+    def provider(spline):
+        last_time = None
+        last_position = None
+
+        def position(time_s: float) -> np.ndarray:
+            nonlocal last_time, last_position
+            if last_time == time_s:
+                return last_position.copy()
+            if profile is None:
+                value = np.asarray(spline(time_s))
+            else:
+                with profile.measure("ephemeris_interpolation"):
+                    value = np.asarray(spline(time_s))
+            last_time = time_s
+            last_position = value
+            return value.copy()
+
+        return position
+
+    return {name: provider(spline) for name, spline in splines.items()}
+
+
+class _null_measure:
+    def __enter__(self):
+        return None
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        return False

@@ -8,8 +8,10 @@ from eopy.constants import ASTRONOMICAL_UNIT, EARTH_MU, SOLAR_RADIATION_PRESSURE
 from eopy.gravity import GravityField, gravity_acceleration
 from eopy.integrators import Dop853Options
 from eopy.propagator import SpacecraftProperties, drag_acceleration, propagate
+from eopy.profiling import PropagationProfile
 from eopy.radiation import (
     RadiationPressure,
+    conical_shadow_factor,
     cylindrical_shadow_factor,
     solar_radiation_pressure_acceleration,
 )
@@ -46,9 +48,31 @@ def test_propagate_two_particles_keeps_batch_shape():
     assert np.all(np.isfinite(out))
 
 
+def test_propagation_profile_reports_effect_costs():
+    radius = 7000e3
+    state = np.array([radius, 0.0, 0.0, 0.0, np.sqrt(EARTH_MU / radius), 0.0])
+    profile = PropagationProfile()
+
+    _time, _state, stats = propagate(
+        state,
+        0.0,
+        60.0,
+        gravity=GravityField(degree=2),
+        options=Dop853Options(max_step=30.0),
+        profile=profile,
+    )
+
+    assert stats.profile is profile
+    assert profile.timings["propagation"].calls == 1
+    assert profile.timings["gravity"].calls == stats.function_evals
+    assert profile.timings["gravity"].seconds > 0.0
+    assert "propagation %" in profile.report()
+
+
 def test_pymsis_density_is_positive_for_leo_point():
     position = np.array([6778e3, 0.0, 0.0])
     cfg = AtmosphereConfig(model="msis")
+    profile = PropagationProfile()
     _t, out, _stats = propagate(
         np.array([*position, 0.0, np.sqrt(EARTH_MU / np.linalg.norm(position)), 0.0]),
         0.0,
@@ -57,8 +81,11 @@ def test_pymsis_density_is_positive_for_leo_point():
         atmosphere=cfg,
         activity=SolarActivity(f10=160.0, f10_mean=155.0, ap=8.0),
         options=Dop853Options(rtol=1e-8, atol=1e-3, max_step=1.0),
+        profile=profile,
     )
     assert np.all(np.isfinite(out))
+    assert profile.timings["atmosphere_density"].calls > 0
+    assert profile.timings["drag_kinematics"].calls > 0
 
 
 def test_solar_radiation_pressure_cylindrical_umbra():
@@ -75,3 +102,20 @@ def test_solar_radiation_pressure_cylindrical_umbra():
     np.testing.assert_allclose(
         solar_radiation_pressure_acceleration(eclipsed, sun, radiation), 0.0
     )
+
+
+def test_conical_shadow_has_lit_umbra_and_penumbra_regions():
+    sun = np.array([ASTRONOMICAL_UNIT, 0.0, 0.0])
+    states = np.array(
+        [
+            [0.0, 7.2e6, 0.0],
+            [-7.2e6, 0.0, 0.0],
+            [-7.2e6, 6.37e6, 0.0],
+        ]
+    )
+
+    factors = conical_shadow_factor(states, sun)
+
+    assert factors[0] == 1.0
+    assert factors[1] == 0.0
+    assert 0.0 <= factors[2] <= 1.0

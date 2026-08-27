@@ -9,6 +9,7 @@ EXAMPLES = [
     "examples.drag_decay",
     "examples.srp_shadow",
     "examples.third_body_sun",
+    "examples.propagation_profile",
 ]
 
 
@@ -34,6 +35,15 @@ def test_drag_and_third_body_examples_show_expected_trends():
 
     assert drag["energy_delta"] < 0.0
     assert third_body["position_delta_m"] > 0.0
+
+
+def test_propagation_profile_example_reports_enabled_effects():
+    result = importlib.import_module("examples.propagation_profile").run(duration_s=60.0)
+
+    assert result["stats"].profile is result["profile"]
+    assert "drag_atmosphere" in result["profile"].timings
+    assert "third_bodies" in result["profile"].timings
+    assert "solar_radiation_pressure" in result["report"]
 
 
 def test_native_gravity_example_runs_with_local_gfc(tmp_path):

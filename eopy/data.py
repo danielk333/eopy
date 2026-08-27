@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import tempfile
+from datetime import date, datetime, timedelta, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.request import urlopen
@@ -125,11 +126,52 @@ def download_gravity_model(
     return download_file(url, filename, target_dir=target_dir, sha256=sha256, refresh=refresh)
 
 
-def read_icgem_gfc(path: str | os.PathLike[str], *, max_degree: int | None = None, max_order: int | None = None) -> GravityModel:
-    """Parse an ICGEM ``.gfc`` gravity model into dense coefficient arrays."""
+def _icgem_epoch(value: str) -> datetime:
+    """Parse ICGEM's ``yyyymmdd.hhmm`` timestamp representation."""
+
+    day, _, clock = value.partition(".")
+    clock = (clock + "0000")[:4]
+    midnight = datetime.strptime(day, "%Y%m%d").replace(tzinfo=timezone.utc)
+    # Some legacy files contain values such as ``.0060``.  Treating the clock
+    # as a duration also accepts that equivalent spelling of 01:00.
+    return midnight + timedelta(hours=int(clock[:2]), minutes=int(clock[2:]))
+
+
+def _coefficient_epoch(value: datetime | date | str | object | None) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    elif isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, date):
+        parsed = datetime(value.year, value.month, value.day)
+    elif hasattr(value, "to_datetime"):
+        parsed = value.to_datetime(timezone=timezone.utc)
+    else:
+        raise TypeError("epoch must be a datetime, date, ISO string, or Astropy Time")
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def read_icgem_gfc(
+    path: str | os.PathLike[str],
+    *,
+    max_degree: int | None = None,
+    max_order: int | None = None,
+    epoch: datetime | date | str | object | None = None,
+) -> GravityModel:
+    """Parse an ICGEM gravity model into dense coefficients.
+
+    ICGEM 2.0 temporal records are evaluated at ``epoch``.  Supplying an
+    epoch is mandatory when selected coefficients use ``gfct`` records; this
+    prevents a time-variable model from silently degrading to central gravity.
+    """
 
     header: dict[str, str] = {}
-    coeffs: list[tuple[int, int, float, float]] = []
+    static_coeffs: list[tuple[int, int, float, float]] = []
+    temporal_records: list[tuple[str, int, int, float, float, datetime, datetime, float | None]] = []
     in_header = True
     with Path(path).open("rt", encoding="utf-8") as handle:
         for raw in handle:
@@ -144,7 +186,8 @@ def read_icgem_gfc(path: str | os.PathLike[str], *, max_degree: int | None = Non
                 if len(parts) >= 2:
                     header[parts[0].lower()] = parts[1]
                 continue
-            if parts[0].lower() != "gfc" or len(parts) < 5:
+            kind = parts[0].lower()
+            if kind not in {"gfc", "gfct", "trnd", "asin", "acos"} or len(parts) < 5:
                 continue
             n = int(parts[1])
             m = int(parts[2])
@@ -152,10 +195,56 @@ def read_icgem_gfc(path: str | os.PathLike[str], *, max_degree: int | None = Non
                 continue
             if max_order is not None and m > max_order:
                 continue
-            coeffs.append((n, m, float(parts[3].replace("D", "E")), float(parts[4].replace("D", "E"))))
+            c_value = float(parts[3].replace("D", "E"))
+            s_value = float(parts[4].replace("D", "E"))
+            if kind == "gfc":
+                static_coeffs.append((n, m, c_value, s_value))
+                continue
+            tail = 3 if kind in {"asin", "acos"} else 2
+            if len(parts) < 5 + tail:
+                raise ValueError(f"invalid {kind} record in {path}: {line}")
+            t0 = _icgem_epoch(parts[-tail])
+            t1 = _icgem_epoch(parts[-tail + 1])
+            period = float(parts[-1].replace("D", "E")) if tail == 3 else None
+            temporal_records.append((kind, n, m, c_value, s_value, t0, t1, period))
 
-    if not coeffs:
+    if not static_coeffs and not temporal_records:
         raise ValueError(f"no gfc coefficients found in {path}")
+
+    evaluation_epoch = _coefficient_epoch(epoch)
+    if temporal_records and evaluation_epoch is None:
+        raise ValueError(f"{path} contains time-variable coefficients; provide epoch")
+
+    coeffs = list(static_coeffs)
+    if temporal_records:
+        active: dict[tuple[int, int], list[tuple[str, float, float, datetime, float | None]]] = {}
+        for kind, n, m, c_value, s_value, t0, t1, period in temporal_records:
+            if t0 <= evaluation_epoch < t1:
+                active.setdefault((n, m), []).append((kind, c_value, s_value, t0, period))
+        temporal_keys = {(n, m) for _kind, n, m, _c, _s, _t0, _t1, _period in temporal_records}
+        missing = sorted(temporal_keys - active.keys())
+        if missing:
+            first = missing[0]
+            raise ValueError(f"no temporal gravity coefficients active at {evaluation_epoch.isoformat()} for {first}")
+        seconds_per_year = 365.25 * 86400.0
+        for (n, m), records in active.items():
+            base = [record for record in records if record[0] == "gfct"]
+            if len(base) != 1:
+                raise ValueError(f"expected one active gfct record for degree/order {(n, m)}")
+            _, c_value, s_value, t0, _ = base[0]
+            years = (evaluation_epoch - t0).total_seconds() / seconds_per_year
+            for kind, dc, ds, record_t0, period in records:
+                if kind == "gfct":
+                    continue
+                record_years = (evaluation_epoch - record_t0).total_seconds() / seconds_per_year
+                if kind == "trnd":
+                    factor = record_years
+                else:
+                    phase = 2.0 * np.pi * record_years / period
+                    factor = np.sin(phase) if kind == "asin" else np.cos(phase)
+                c_value += dc * factor
+                s_value += ds * factor
+            coeffs.append((n, m, c_value, s_value))
 
     degree = max(n for n, _m, _c, _s in coeffs)
     order = max(m for _n, m, _c, _s in coeffs)

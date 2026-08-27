@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import argparse
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
 
 from eopy.data import DEFAULT_GRAVITY_MODEL_URL, download_gravity_model, read_icgem_gfc
 from eopy.gravity import GravityField
+from eopy.frames import interpolated_earth_orientation
 from eopy.integrators import Dop853Options
 from eopy.propagator import propagate
 
@@ -42,18 +44,26 @@ def run(
     backend: str = "native",
     duration_s: float = 1800.0,
     max_step_s: float = 60.0,
+    epoch: datetime = datetime(2024, 1, 1, tzinfo=timezone.utc),
 ):
-    model = read_icgem_gfc(gravity_model_path, max_degree=degree, max_order=order)
+    model = read_icgem_gfc(
+        gravity_model_path,
+        max_degree=degree,
+        max_order=order,
+        epoch=epoch,
+    )
     field = GravityField.from_model(model, degree=degree, order=order, backend=backend)
     radius_m = model.reference_radius + 700_000.0
     speed_mps = np.sqrt(model.mu / radius_m)
     state0 = np.array([radius_m, 0.0, 0.0, 0.0, speed_mps, 0.0])
+    orientation = interpolated_earth_orientation(epoch, 0.0, duration_s)
 
     t, states, stats = propagate(
         state0,
         0.0,
         duration_s,
         gravity=field,
+        earth_orientation=orientation,
         options=Dop853Options(rtol=1e-10, atol=1e-3, max_step=max_step_s),
         return_history=True,
     )
@@ -84,6 +94,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--order", type=int, default=10, help="Maximum gravity order to load.")
     parser.add_argument("--duration", type=float, default=1800.0, help="Propagation duration in seconds.")
     parser.add_argument("--max-step", type=float, default=60.0, help="Integrator maximum step in seconds.")
+    parser.add_argument("--epoch", default="2024-01-01T00:00:00+00:00", help="UTC coefficient and propagation epoch.")
     parser.add_argument("--no-plot", action="store_true", help="Do not display the propagation plot.")
     return parser
 
@@ -108,6 +119,7 @@ def main(argv: list[str] | None = None) -> int:
         backend=args.backend,
         duration_s=args.duration,
         max_step_s=args.max_step,
+        epoch=datetime.fromisoformat(args.epoch.replace("Z", "+00:00")),
     )
 
     print(f"Model: {result['model_name']}")

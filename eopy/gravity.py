@@ -1,10 +1,8 @@
 """Gravity acceleration kernels.
 
-The fast path implements central gravity plus J2 analytically. A slower generic
-spherical-harmonic potential gradient is included for low-degree validation and
-for carrying Orekit/Holmes-Featherstone style coefficient data through the API.
-For production high-degree fields, replace ``_harmonic_accel_fd`` with a C++ or
-Numba Holmes-Featherstone recursion over fully normalized coefficients.
+The fast path implements central gravity plus J2 analytically. Fully normalized
+spherical harmonics use the native analytical-gradient kernel; a slower generic
+potential gradient remains available for unnormalized Python validation.
 """
 
 from __future__ import annotations
@@ -129,12 +127,10 @@ def _harmonic_accel_fd(position_m: np.ndarray, field: GravityField) -> np.ndarra
 
 
 def gravity_acceleration(position_m: np.ndarray, field: GravityField | None = None) -> np.ndarray:
-    """Return inertial gravity acceleration for one or many positions.
+    """Return gravity acceleration in the same axes as ``position_m``.
 
-    TODO: add Earth orientation and body-fixed/inertial transforms before using
-    non-zonal coefficients in operational runs.
-    TODO: port Orekit's Holmes-Featherstone normalized-recursion gravity kernel
-    to a compiled extension for high degree/order fields.
+    ICGEM tesseral coefficients are Earth-fixed.  The propagator handles their
+    GCRS/ITRS rotation when an ``EarthOrientation`` provider is supplied.
     """
 
     gf = GravityField() if field is None else field

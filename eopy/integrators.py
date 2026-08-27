@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Sequence
+from typing import Any, Callable, Sequence
 
 import numpy as np
 from scipy.integrate import solve_ivp
@@ -29,6 +29,7 @@ class Dop853Stats:
     message: str
     event_times: tuple[Array, ...] | None = None
     event_states: tuple[Array, ...] | None = None
+    profile: Any | None = None
 
 
 Event = Callable[[float, Array], float]
@@ -42,6 +43,7 @@ def integrate_dop853(
     *,
     options: Dop853Options | None = None,
     return_history: bool = False,
+    sample_times: Array | None = None,
     events: Event | Sequence[Event] | None = None,
 ) -> tuple[float, Array, Dop853Stats] | tuple[Array, Array, Dop853Stats]:
     """Integrate ``y' = fun(t, y)`` with SciPy's ``solve_ivp`` DOP853.
@@ -81,6 +83,18 @@ def integrate_dop853(
     if opts.first_step is not None:
         kwargs["first_step"] = opts.first_step
 
+    requested_times = None
+    if sample_times is not None:
+        requested_times = np.asarray(sample_times, dtype=float)
+        if requested_times.ndim != 1 or requested_times.size == 0:
+            raise ValueError("sample_times must be a non-empty one-dimensional array")
+        if np.any(np.diff(requested_times) <= 0.0):
+            raise ValueError("sample_times must be strictly increasing")
+        lower, upper = sorted((float(t0), float(t1)))
+        if requested_times[0] < lower or requested_times[-1] > upper:
+            raise ValueError("sample_times must lie within the integration interval")
+        kwargs["t_eval"] = requested_times
+
     if wrapped_events is not None:
         kwargs["events"] = wrapped_events
     solution = solve_ivp(flat_fun, (float(t0), float(t1)), y0_arr.reshape(-1), **kwargs)
@@ -102,7 +116,7 @@ def integrate_dop853(
         event_times=event_times,
         event_states=event_states,
     )
-    if return_history:
+    if return_history or requested_times is not None:
         ys = np.moveaxis(solution.y, 1, 0).reshape((solution.t.size,) + shape)
         return solution.t, ys, stats
     return float(solution.t[-1]), solution.y[:, -1].reshape(shape), stats

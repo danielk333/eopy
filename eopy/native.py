@@ -152,11 +152,13 @@ def holmes_featherstone_acceleration(
     normalized: bool,
 ) -> np.ndarray:
     position, single = _as_position_batch(position_m)
-    c_arr = np.ascontiguousarray(c, dtype=np.float64)
-    s_arr = np.zeros_like(c_arr) if s is None else np.ascontiguousarray(s, dtype=np.float64)
+    c_source = np.asarray(c, dtype=np.float64)
+    s_source = np.zeros_like(c_source) if s is None else np.asarray(s, dtype=np.float64)
+    c_arr = np.ascontiguousarray(c_source[: degree + 1, : order + 1])
+    s_arr = np.ascontiguousarray(s_source[: degree + 1, : order + 1])
     if c_arr.ndim != 2 or s_arr.shape != c_arr.shape:
         raise ValueError("c and s must be two-dimensional arrays with matching shape")
-    if degree >= c_arr.shape[0] or order >= c_arr.shape[1]:
+    if degree >= c_source.shape[0] or order >= c_source.shape[1]:
         raise ValueError("degree/order exceed coefficient array shape")
     out = np.empty_like(position)
     status = _load().eopy_holmes_featherstone_accel(

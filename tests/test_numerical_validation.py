@@ -6,6 +6,7 @@ from eopy.events import altitude_crossing_event, cylindrical_eclipse_event
 from eopy.gravity import GravityField, j2_acceleration
 from eopy.integrators import Dop853Options
 from eopy.propagator import SpacecraftProperties, propagate
+from eopy.relativity import schwarzschild_acceleration
 from eopy.third_body import ThirdBody, third_body_acceleration
 
 
@@ -92,6 +93,44 @@ def test_batch_propagation_matches_individual_propagation():
         )
         singles.append(out)
     np.testing.assert_allclose(batch, np.asarray(singles), rtol=0.0, atol=2e-5)
+
+
+def test_sample_times_return_one_continuous_solution():
+    radius = 7_000_000.0
+    state0 = np.array([radius, 0.0, 0.0, 0.0, np.sqrt(EARTH_MU / radius), 0.0])
+    sample_times = np.array([0.0, 300.0, 600.0, 900.0])
+
+    times, states, _stats = propagate(
+        state0,
+        0.0,
+        900.0,
+        gravity=GravityField(degree=0, j2=0.0),
+        sample_times=sample_times,
+        options=Dop853Options(rtol=1e-12, atol=1e-7, max_step=30.0),
+    )
+    _time, terminal, _stats = propagate(
+        state0,
+        0.0,
+        900.0,
+        gravity=GravityField(degree=0, j2=0.0),
+        options=Dop853Options(rtol=1e-12, atol=1e-7, max_step=30.0),
+    )
+
+    np.testing.assert_array_equal(times, sample_times)
+    np.testing.assert_allclose(states[0], state0, rtol=0.0, atol=0.0)
+    np.testing.assert_allclose(states[-1], terminal, rtol=0.0, atol=1e-8)
+
+
+def test_schwarzschild_acceleration_is_finite_for_circular_leo():
+    radius = 7_000_000.0
+    position = np.array([[radius, 0.0, 0.0]])
+    velocity = np.array([[0.0, np.sqrt(EARTH_MU / radius), 0.0]])
+
+    acceleration = schwarzschild_acceleration(position, velocity)
+
+    assert acceleration.shape == position.shape
+    assert acceleration[0, 0] > 0.0
+    np.testing.assert_array_equal(acceleration[0, 1:], 0.0)
 
 
 def test_j2_acceleration_matches_closed_form_reference_points():

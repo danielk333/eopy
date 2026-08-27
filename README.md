@@ -9,7 +9,7 @@ public shape of the code.
 - DOP853/Dormand-Prince 8(5,3) propagation through SciPy `solve_ivp`.
 - Batch Cartesian propagation for states shaped `(N, 6)`.
 - Central Earth gravity plus analytic J2.
-- A low-degree spherical-harmonic and Holmes-Featherstone style gravity fields (TODO).
+- Fully normalized spherical-harmonic gravity through a native analytical-gradient kernel.
 - DTM2000 density (TODO) and MSIS density through `pymsis`.
 - Drag acceleration with co-rotating atmosphere and ballistic coefficient input.
 - Isotropic solar radiation pressure with cylindrical Earth shadowing.
@@ -37,7 +37,34 @@ cmake -S . -B build/native -DCMAKE_BUILD_TYPE=Release
 cmake --build build/native --config Release
 ```
 
-Warning, the C++ code is in development and mostly placeholders.
+The native API is loaded through `ctypes`.
+
+## Precision propagation
+
+High-degree gravity models are defined in ITRS, while propagated Cartesian
+states are normally GCRS.  Build an Earth-orientation provider and pass it with
+the gravity field so tesseral harmonics and atmospheric drag are evaluated in
+the correct rotating frame.  Time-variable ICGEM 2.0 models also require an
+evaluation epoch:
+
+```python
+from datetime import datetime, timezone
+
+from eopy.data import read_icgem_gfc
+from eopy.frames import interpolated_earth_orientation
+from eopy.gravity import GravityField
+
+epoch = datetime(2024, 7, 4, tzinfo=timezone.utc)
+model = read_icgem_gfc(
+    "EIGEN-6S4_v2.gfc", max_degree=120, max_order=120, epoch=epoch
+)
+orientation = interpolated_earth_orientation(epoch, 0.0, 86400.0)
+field = GravityField.from_model(model, degree=120, order=120, backend="native")
+```
+
+`propagate(..., sample_times=epochs)` evaluates a single continuous DOP853
+solution at requested offsets.  Historical MSIS inputs can be loaded with
+`CelestrakSpaceWeather.from_csv("SW-All.csv")`.
 
 ## Example
 
@@ -67,6 +94,12 @@ t, propagated, stats = propagate(
 
 More runnable examples live in `examples/` and are covered by pytest so they
 stay synchronized with the public API.
+
+To print a slowest-first breakdown of propagation and force-model costs:
+
+```bash
+python examples/propagation_profile.py
+```
 
 For native gravity and external data workflows:
 

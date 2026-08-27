@@ -2,6 +2,7 @@
 
 from .atmosphere import (
     AtmosphereConfig,
+    CelestrakSpaceWeather,
     SolarActivity,
     density_dtm2000_like,
     density_msis_like,
@@ -18,11 +19,19 @@ from .data import (
     read_icgem_gfc,
 )
 from .gravity import GravityField, gravity_acceleration
+from .frames import EarthOrientation, interpolated_earth_orientation
 from .integrators import Dop853Options, integrate_dop853
+from .profiling import EffectTiming, PropagationProfile
 from .propagator import SpacecraftProperties, propagate
-from .radiation import RadiationPressure, solar_radiation_pressure_acceleration
+from .radiation import (
+    RadiationPressure,
+    conical_shadow_factor,
+    solar_radiation_pressure_acceleration,
+)
+from .relativity import schwarzschild_acceleration
 from .third_body import (
     ThirdBody,
     astropy_geocentric_body_provider,
+    interpolated_astropy_body_providers,
     third_body_acceleration,
 )
