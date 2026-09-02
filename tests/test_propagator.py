@@ -1,5 +1,6 @@
 import numpy as np
 import pymsis
+from scipy.interpolate import CubicSpline
 from spacecoords import frames
 
 from eopy.atmosphere import AtmosphereConfig, SolarActivity
@@ -7,6 +8,7 @@ import eopy.atmosphere as atmosphere_module
 from eopy.constants import ASTRONOMICAL_UNIT, EARTH_MU, SOLAR_RADIATION_PRESSURE_1AU
 from eopy.gravity import GravityField, gravity_acceleration
 from eopy.integrators import Dop853Options
+from eopy.frames import EarthOrientation
 from eopy.propagator import SpacecraftProperties, drag_acceleration, propagate
 from eopy.profiling import PropagationProfile
 from eopy.radiation import (
@@ -86,6 +88,30 @@ def test_pymsis_density_is_positive_for_leo_point():
     assert np.all(np.isfinite(out))
     assert profile.timings["atmosphere_density"].calls > 0
     assert profile.timings["drag_kinematics"].calls > 0
+
+
+def test_dtm2000_propagation_requires_frame_and_sun_and_is_finite():
+    radius = 6_778_137.0
+    state = np.array([radius, 0.0, 0.0, 0.0, np.sqrt(EARTH_MU / radius), 0.0])
+    atmosphere = AtmosphereConfig(model="dtm2000")
+    spacecraft = SpacecraftProperties(ballistic_coefficient_m2_per_kg=0.01)
+    with np.testing.assert_raises_regex(ValueError, "earth_orientation"):
+        propagate(state, 0.0, 1.0, spacecraft=spacecraft, atmosphere=atmosphere)
+
+    rotations = np.repeat(np.eye(3)[None, :, :], 2, axis=0)
+    orientation = EarthOrientation(CubicSpline([0.0, 1.0], rotations, axis=0))
+    _time, result, _stats = propagate(
+        state,
+        0.0,
+        1.0,
+        spacecraft=spacecraft,
+        atmosphere=atmosphere,
+        activity=SolarActivity(kp_3h=2.0, kp_24h=1.5),
+        earth_orientation=orientation,
+        sun_position=np.array([ASTRONOMICAL_UNIT, 0.0, 0.0]),
+        options=Dop853Options(max_step=1.0),
+    )
+    assert np.all(np.isfinite(result))
 
 
 def test_solar_radiation_pressure_cylindrical_umbra():

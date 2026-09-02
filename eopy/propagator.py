@@ -9,9 +9,10 @@ import numpy as np
 
 from .atmosphere import (
     AtmosphereConfig,
-    SolarActivity,
-    density_dtm2000_like,
-    density_msis_like,
+    SolarActivityProvider,
+    density_dtm2000,
+    density_exponential,
+    density_msis,
 )
 from .constants import EARTH_OMEGA
 from .frames import EarthOrientation
@@ -46,10 +47,11 @@ def drag_acceleration(
     velocity_mps: np.ndarray,
     spacecraft: SpacecraftProperties,
     atmosphere: AtmosphereConfig | None,
-    activity: SolarActivity | None,
+    activity: SolarActivityProvider | None,
     profile: PropagationProfile | None = None,
     time_s: float = 0.0,
     earth_orientation: EarthOrientation | None = None,
+    sun_position_m: np.ndarray | None = None,
 ) -> np.ndarray:
     cfg = AtmosphereConfig() if atmosphere is None else atmosphere
     force_position = position_m
@@ -67,9 +69,19 @@ def drag_acceleration(
     density_measure = profile.measure("atmosphere_density") if profile is not None else _null_measure()
     with density_measure:
         if cfg.model.lower() == "msis":
-            rho = density_msis_like(force_position, activity, cfg, time_s=time_s)
+            rho = density_msis(force_position, activity, cfg, time_s=time_s)
         elif cfg.model.lower() == "dtm2000":
-            rho = density_dtm2000_like(force_position, activity, cfg)
+            if sun_position_m is None:
+                raise ValueError("sun_position is required for DTM2000")
+            fixed_sun = np.asarray(sun_position_m)
+            if earth_orientation is not None:
+                fixed_sun = earth_orientation.position_to_fixed(time_s, fixed_sun)
+            rho = density_dtm2000(
+                force_position, activity, cfg, time_s=time_s,
+                sun_position_m=fixed_sun,
+            )
+        elif cfg.model.lower() == "exponential":
+            rho = density_exponential(force_position, activity, cfg)
         else:
             raise ValueError(f"unknown atmosphere model {cfg.model!r}")
 
@@ -98,7 +110,7 @@ def make_rhs(
     gravity: GravityField | None = None,
     spacecraft: SpacecraftProperties | None = None,
     atmosphere: AtmosphereConfig | None = None,
-    activity: SolarActivity | None = None,
+    activity: SolarActivityProvider | None = None,
     radiation: RadiationPressure | None = None,
     sun_position: Callable[[float], np.ndarray] | np.ndarray | None = None,
     third_bodies: ThirdBody | Sequence[ThirdBody] | None = None,
@@ -108,11 +120,28 @@ def make_rhs(
     profile: PropagationProfile | None = None,
 ) -> Callable[[float, np.ndarray], np.ndarray]:
     props = SpacecraftProperties() if spacecraft is None else spacecraft
+    atmosphere_model = (AtmosphereConfig() if atmosphere is None else atmosphere).model.lower()
+    has_drag = (
+        props.ballistic_coefficient_m2_per_kg is not None
+        and np.asarray(props.ballistic_coefficient_m2_per_kg).any()
+    ) or np.asarray(props.drag_area_m2).any()
+    if has_drag and atmosphere_model == "dtm2000":
+        if earth_orientation is None:
+            raise ValueError("earth_orientation is required for DTM2000 propagation")
+        if sun_position is None:
+            raise ValueError("sun_position is required for DTM2000 propagation")
 
     def rhs(t: float, state: np.ndarray) -> np.ndarray:
         y, single = _as_batch_state(state)
         position = y[:, :3]
         velocity = y[:, 3:]
+        sun = None
+        if sun_position is not None and (atmosphere_model == "dtm2000" or radiation is not None):
+            if profile is None:
+                sun = sun_position(t) if callable(sun_position) else sun_position
+            else:
+                with profile.measure("sun_position"):
+                    sun = sun_position(t) if callable(sun_position) else sun_position
         if profile is None:
             if earth_orientation is not None and gravity is not None and gravity.c is not None:
                 fixed_position = earth_orientation.position_to_fixed(t, position)
@@ -128,23 +157,19 @@ def make_rhs(
                     acc = earth_orientation.vector_to_inertial(t, fixed_acceleration)
                 else:
                     acc = gravity_acceleration(position, gravity)
-        has_ballistic = props.ballistic_coefficient_m2_per_kg is not None and np.asarray(props.ballistic_coefficient_m2_per_kg).any()
-        if has_ballistic or np.asarray(props.drag_area_m2).any():
+        if has_drag:
             if profile is None:
-                drag = drag_acceleration(position, velocity, props, atmosphere, activity, time_s=t, earth_orientation=earth_orientation)
+                drag = drag_acceleration(position, velocity, props, atmosphere, activity, time_s=t, earth_orientation=earth_orientation, sun_position_m=sun)
             else:
                 with profile.measure("drag_atmosphere"):
-                    drag = drag_acceleration(position, velocity, props, atmosphere, activity, profile, time_s=t, earth_orientation=earth_orientation)
+                    drag = drag_acceleration(position, velocity, props, atmosphere, activity, profile, time_s=t, earth_orientation=earth_orientation, sun_position_m=sun)
             acc = acc + drag
         if radiation is not None and np.asarray(radiation.area_m2).any():
             if sun_position is None:
                 raise ValueError("sun_position is required when radiation is enabled")
             if profile is None:
-                sun = sun_position(t) if callable(sun_position) else sun_position
                 srp = solar_radiation_pressure_acceleration(position, sun, radiation)
             else:
-                with profile.measure("sun_position"):
-                    sun = sun_position(t) if callable(sun_position) else sun_position
                 with profile.measure("solar_radiation_pressure"):
                     srp = solar_radiation_pressure_acceleration(position, sun, radiation)
             acc = acc + srp
@@ -188,7 +213,7 @@ def propagate(
     gravity: GravityField | None = None,
     spacecraft: SpacecraftProperties | None = None,
     atmosphere: AtmosphereConfig | None = None,
-    activity: SolarActivity | None = None,
+    activity: SolarActivityProvider | None = None,
     radiation: RadiationPressure | None = None,
     sun_position: Callable[[float], np.ndarray] | np.ndarray | None = None,
     third_bodies: ThirdBody | Sequence[ThirdBody] | None = None,
@@ -203,8 +228,8 @@ def propagate(
 ):
     """Propagate one state ``(6,)`` or many states ``(N, 6)``.
 
-    TODO: add solid/ocean tides, maneuvers,
-    covariance/STM propagation and Orekit-grade frame/time-scale handling.
+    Solid/ocean tides, maneuver scheduling, and covariance/STM propagation are
+    intentionally outside the compact force-model interface.
     """
 
     state, single = _as_batch_state(state0)

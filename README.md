@@ -4,13 +4,18 @@ Earth orbits in Python: a compact, fast propagation designed around NumPy arrays
 so computationally heavy pieces can later move to low level implementations without changing the
 public shape of the code.
 
+eopy is licensed under the GNU General Public License version 3. The DTM2000
+and isotropic radiation-pressure implementations contain modified portions
+adapted from Apache-2.0-licensed Orekit; the applicable upstream license and
+attribution notices are included in `eopy/assets/`.
+
 ## What is implemented
 
 - DOP853/Dormand-Prince 8(5,3) propagation through SciPy `solve_ivp`.
 - Batch Cartesian propagation for states shaped `(N, 6)`.
 - Central Earth gravity plus analytic J2.
 - Fully normalized spherical-harmonic gravity through a native analytical-gradient kernel.
-- DTM2000 density (TODO) and MSIS density through `pymsis`.
+- DTM2000 density and MSIS 2.1 density through `pymsis`.
 - Drag acceleration with co-rotating atmosphere and ballistic coefficient input.
 - Isotropic solar radiation pressure with cylindrical Earth shadowing.
 - Point-mass third-body perturbations with fixed or callable position providers, including a lazy
@@ -65,6 +70,13 @@ field = GravityField.from_model(model, degree=120, order=120, backend="native")
 `propagate(..., sample_times=epochs)` evaluates a single continuous DOP853
 solution at requested offsets.  Historical MSIS inputs can be loaded with
 `CelestrakSpaceWeather.from_csv("SW-All.csv")`.
+
+The default atmosphere is the lightweight configurable exponential model.
+DTM2000 propagation must be selected explicitly and supplied with both an
+`EarthOrientation` and an inertial `sun_position` provider; this ensures its
+longitude, season, and local-solar-time terms are evaluated in the correct
+Earth-fixed frame. CelesTrak space-weather files provide both the Ap history
+used by MSIS and the Kp history used by DTM2000.
 
 ## Example
 

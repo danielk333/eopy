@@ -1,8 +1,4 @@
-"""Frame and time helpers.
-
-TODO: some of these are already implemented in spacecoords, can use those, some are dubious and
-straight up copy-pasta from elsewhere - needs validation
-"""
+"""Validated frame, Earth-orientation, geodetic, and time helpers."""
 
 from __future__ import annotations
 

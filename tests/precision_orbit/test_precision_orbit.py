@@ -60,34 +60,82 @@ def _request_json(url: str, *, data: bytes | None = None, headers: dict[str, str
         return json.load(response)
 
 
-def _download_precision_orbit(path: Path, username: str, password: str) -> Path:
-    """Download the Sentinel-2B product covering ``START`` atomically."""
+def _product_interval(product):
+    content = product.get("ContentDate", {})
+    interval = []
+    for key in ("Start", "End"):
+        instant = dt.datetime.fromisoformat(content[key].replace("Z", "+00:00"))
+        interval.append(instant.replace(tzinfo=UTC) if instant.tzinfo is None else instant.astimezone(UTC))
+    return tuple(interval)
 
-    query_start = (START - dt.timedelta(days=1)).isoformat().replace("+00:00", "Z")
+
+def _products_covering_interval(products, start: dt.datetime, end: dt.datetime):
+    """Return a minimal chronological product chain covering an interval."""
+
+    candidates = sorted(
+        (product for product in products if "S2B" in product.get("Name", "")),
+        key=lambda product: _product_interval(product)[0],
+    )
+    selected = []
+    cursor = start
+    while cursor < end:
+        usable = [
+            product for product in candidates
+            if _product_interval(product)[0] <= cursor < _product_interval(product)[1]
+        ]
+        if not usable:
+            raise RuntimeError(
+                f"CDSE products do not continuously cover {start.isoformat()} to {end.isoformat()}; "
+                f"coverage stops at {cursor.isoformat()}"
+            )
+        product = max(usable, key=lambda item: _product_interval(item)[1])
+        if not selected or product["Id"] != selected[-1]["Id"]:
+            selected.append(product)
+        cursor = _product_interval(product)[1]
+    return selected
+
+
+def _merge_precision_orbit_files(inputs: list[Path], output: Path) -> None:
+    """Merge OSVs from multiple EOF products into one chronological cache file."""
+
+    trees = [ET.parse(source) for source in inputs]
+    output_tree = trees[0]
+    output_list = output_tree.getroot().find(".//Data_Block//List_of_OSVs")
+    if output_list is None:
+        raise ValueError(f"no List_of_OSVs found in {inputs[0]}")
+    osvs = {}
+    for source, tree in zip(inputs, trees):
+        for osv in tree.getroot().findall(".//Data_Block//OSV"):
+            timestamp = osv.findtext("UTC")
+            if timestamp is None:
+                raise ValueError(f"OSV without UTC timestamp in {source}")
+            epoch = dt.datetime.fromisoformat(timestamp.removeprefix("UTC=").replace("Z", "+00:00"))
+            epoch = epoch.replace(tzinfo=UTC) if epoch.tzinfo is None else epoch.astimezone(UTC)
+            osvs[epoch] = osv
+    output_list.clear()
+    output_list.set("count", str(len(osvs)))
+    for epoch in sorted(osvs):
+        output_list.append(osvs[epoch])
+    output_tree.write(output, encoding="utf-8", xml_declaration=True)
+
+
+def _download_precision_orbit(path: Path, username: str, password: str) -> Path:
+    """Download and merge Sentinel-2B products covering the full test interval."""
+
     query_end = END.isoformat().replace("+00:00", "Z")
     predicate = (
         "Collection/Name eq 'SENTINEL-2' and "
-        f"ContentDate/Start gt {query_start} and ContentDate/Start lt {query_end} and "
+        f"ContentDate/End gt {START.isoformat().replace('+00:00', 'Z')} and "
+        f"ContentDate/Start lt {query_end} and "
         "Attributes/OData.CSC.StringAttribute/any(a:a/Name eq 'productType' and a/Value eq 'AUX_POEORB')"
     )
     catalogue_url = "https://catalogue.dataspace.copernicus.eu/odata/v1/Products?" + urllib.parse.urlencode(
         {"$filter": predicate, "$orderby": "ContentDate/Start", "$top": "20"}
     )
     products = _request_json(catalogue_url)["value"]
-    products = [product for product in products if "S2B" in product.get("Name", "")]
     if not products:
         raise RuntimeError("CDSE returned no Sentinel-2B AUX_POEORB product for the test interval")
-
-    def covers_start(product):
-        content = product.get("ContentDate", {})
-        product_start = dt.datetime.fromisoformat(content["Start"].replace("Z", "+00:00"))
-        product_end = dt.datetime.fromisoformat(content["End"].replace("Z", "+00:00"))
-        return product_start <= START <= product_end
-
-    covering_products = [product for product in products if covers_start(product)]
-    if not covering_products:
-        raise RuntimeError("CDSE returned no Sentinel-2B AUX_POEORB product covering the initial epoch")
-    product = covering_products[-1]
+    covering_products = _products_covering_interval(products, START, END)
 
     token_data = urllib.parse.urlencode(
         {
@@ -104,18 +152,23 @@ def _download_precision_orbit(path: Path, username: str, password: str) -> Path:
     )["access_token"]
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".part")
-    request = urllib.request.Request(
-        f"https://download.dataspace.copernicus.eu/odata/v1/Products({product['Id']})/$value",
-        headers={"Authorization": f"Bearer {token}"},
-    )
+    downloads = [path.with_suffix(path.suffix + f".part.{index}") for index in range(len(covering_products))]
+    merged = path.with_suffix(path.suffix + ".part")
     try:
-        with urllib.request.urlopen(request, timeout=120.0) as response, temporary.open("wb") as output:
-            while block := response.read(1024 * 1024):
-                output.write(block)
-        temporary.replace(path)
+        for product, temporary in zip(covering_products, downloads):
+            request = urllib.request.Request(
+                f"https://download.dataspace.copernicus.eu/odata/v1/Products({product['Id']})/$value",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            with urllib.request.urlopen(request, timeout=120.0) as response, temporary.open("wb") as output:
+                while block := response.read(1024 * 1024):
+                    output.write(block)
+        _merge_precision_orbit_files(downloads, merged)
+        merged.replace(path)
     finally:
-        temporary.unlink(missing_ok=True)
+        merged.unlink(missing_ok=True)
+        for temporary in downloads:
+            temporary.unlink(missing_ok=True)
     return path
 
 
@@ -137,6 +190,66 @@ def _parse_earth_fixed_states(path: Path, start: dt.datetime, end: dt.datetime):
     if len(states) < 2:
         raise ValueError(f"fewer than two precise states in {path} between {start} and {end}")
     return Time(epochs, scale="utc"), np.asarray(states, dtype=np.float64)
+
+
+def _covers_requested_interval(
+    epochs: Time,
+    start: dt.datetime,
+    end: dt.datetime,
+    *,
+    tolerance_s: float = 60.0,
+) -> bool:
+    first = epochs[0].to_datetime(timezone=UTC)
+    last = epochs[-1].to_datetime(timezone=UTC)
+    return (
+        abs((first - start).total_seconds()) <= tolerance_s
+        and abs((end - last).total_seconds()) <= tolerance_s
+    )
+
+
+def test_product_selection_covers_entire_requested_interval():
+    def product(identifier, start_hour, end_hour):
+        origin = dt.datetime(2024, 7, 4, tzinfo=UTC)
+        return {
+            "Id": identifier,
+            "Name": f"S2B_{identifier}_AUX_POEORB",
+            "ContentDate": {
+                "Start": (origin + dt.timedelta(hours=start_hour)).isoformat(),
+                "End": (origin + dt.timedelta(hours=end_hour)).isoformat(),
+            },
+        }
+
+    products = [product("a", 0, 18), product("b", 12, 36)]
+    selected = _products_covering_interval(
+        products,
+        dt.datetime(2024, 7, 4, 10, tzinfo=UTC),
+        dt.datetime(2024, 7, 5, 10, tzinfo=UTC),
+    )
+
+    assert [item["Id"] for item in selected] == ["a", "b"]
+
+
+def test_merge_precision_orbit_files_sorts_and_deduplicates_osvs(tmp_path):
+    template = """<Earth_Explorer_File><Data_Block><List_of_OSVs count="2">{}</List_of_OSVs></Data_Block></Earth_Explorer_File>"""
+
+    def osv(timestamp, x):
+        return f"<OSV><UTC>UTC={timestamp}</UTC><X>{x}</X><Y>2</Y><Z>3</Z><VX>4</VX><VY>5</VY><VZ>6</VZ></OSV>"
+
+    first = tmp_path / "first.eof"
+    second = tmp_path / "second.eof"
+    merged = tmp_path / "merged.eof"
+    first.write_text(template.format(osv("2024-07-04T10:15:10Z", 2) + osv("2024-07-04T10:15:20Z", 3)))
+    second.write_text(template.format(osv("2024-07-04T10:15:00Z", 1) + osv("2024-07-04T10:15:10Z", 2)))
+
+    _merge_precision_orbit_files([first, second], merged)
+    epochs, states = _parse_earth_fixed_states(
+        merged,
+        dt.datetime(2024, 7, 4, 10, 15, tzinfo=UTC),
+        dt.datetime(2024, 7, 4, 10, 16, tzinfo=UTC),
+    )
+
+    assert len(epochs) == 3
+    np.testing.assert_array_equal(states[:, 0], [1.0, 2.0, 3.0])
 
 
 def test_parse_earth_fixed_states_accepts_eof_utc_timestamps(tmp_path):
@@ -258,11 +371,11 @@ def plot_propagation_errors(result):
     import matplotlib.pyplot as plt
 
     figure, axes = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
-    axes[0].plot(result["time_s"] / 60.0, result["position_error_m"])
+    axes[0].plot(result["time_s"] / 3600.0, result["position_error_m"])
     axes[0].set_ylabel("Position error [m]")
     axes[0].grid(True)
-    axes[1].plot(result["time_s"] / 60.0, result["velocity_error_mps"])
-    axes[1].set(xlabel="Time since initial precise state [min]", ylabel="Velocity error [m/s]")
+    axes[1].plot(result["time_s"] / 3600.0, result["velocity_error_mps"])
+    axes[1].set(xlabel="Time since initial precise state [h]", ylabel="Velocity error [m/s]")
     axes[1].grid(True)
     figure.suptitle("eopy propagation versus Sentinel-2B precise orbit")
     figure.tight_layout()
@@ -285,6 +398,16 @@ def test_propagation_against_precision_orbit(
         _download_precision_orbit(orbit_file, username, password)
 
     epochs, earth_fixed_states = _parse_earth_fixed_states(orbit_file, START, END)
+    if not _covers_requested_interval(epochs, START, END):
+        username, password = cdse_credentials
+        if username and password:
+            _download_precision_orbit(orbit_file, username, password)
+            epochs, earth_fixed_states = _parse_earth_fixed_states(orbit_file, START, END)
+        if not _covers_requested_interval(epochs, START, END):
+            pytest.fail(
+                "precision-orbit data does not cover the full requested 24-hour interval; "
+                "provide CDSE credentials to refresh the cache or a complete --precision-orbit-file"
+            )
     gravity_model, space_weather = precision_environment_paths
     if gravity_model is None or space_weather is None:
         pytest.skip("precision propagation requires cached gravity and space-weather files")
@@ -308,6 +431,7 @@ def test_propagation_against_precision_orbit(
         plot_propagation_errors(result)
         plt.show()
 
+    assert result["time_s"][-1] >= 24.0 * 3600.0 - 120.0
     assert result["position_error_m"][0] == 0.0
     assert result["velocity_error_mps"][0] == 0.0
     assert np.max(result["position_error_m"]) < 100.0

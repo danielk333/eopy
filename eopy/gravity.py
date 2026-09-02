@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.special import lpmv
+from scipy.special import gammaln, lpmv
 
 from .constants import EARTH_J2, EARTH_MU, EARTH_RADIUS
 from .data import GravityModel
@@ -91,9 +91,6 @@ def _potential_unnormalized(position_m: np.ndarray, field: GravityField) -> np.n
 
     if field.c is None:
         return u
-    if field.normalized:
-        raise NotImplementedError("fully normalized coefficient recursion is a TODO for the C++ gravity kernel")
-
     degree = min(field.degree, field.c.shape[0] - 1)
     order = min(field.order, degree)
     series = np.ones_like(rho)
@@ -107,7 +104,14 @@ def _potential_unnormalized(position_m: np.ndarray, field: GravityField) -> np.n
             s_nm = 0.0 if field.s is None else field.s[n, m]
             if c_nm == 0.0 and s_nm == 0.0:
                 continue
-            p_nm = lpmv(m, n, lat_sin)
+            # scipy includes the Condon-Shortley phase; ICGEM coefficients do not.
+            p_nm = (-1.0 if m % 2 else 1.0) * lpmv(m, n, lat_sin)
+            if field.normalized:
+                delta = 1.0 if m == 0 else 0.0
+                scale = np.sqrt((2.0 - delta) * (2 * n + 1)) * np.exp(
+                    0.5 * (gammaln(n - m + 1) - gammaln(n + m + 1))
+                )
+                p_nm = p_nm * scale
             series += rr_n * p_nm * (c_nm * np.cos(m * lon) + s_nm * np.sin(m * lon))
     return field.mu / rho * series
 
@@ -157,8 +161,6 @@ def gravity_acceleration(position_m: np.ndarray, field: GravityField | None = No
             except NativeUnavailableError:
                 if gf.backend == "native":
                     raise
-        if gf.normalized:
-            raise NotImplementedError("normalized spherical harmonics require the native gravity backend")
         return _harmonic_accel_fd(position_m, gf)
 
     if gf.backend in {"auto", "native"}:

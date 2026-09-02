@@ -1,4 +1,10 @@
-"""Solar radiation pressure kernels."""
+"""Solar radiation pressure kernels.
+
+The isotropic single-coefficient radiation-pressure implementation is adapted
+from Orekit, Copyright 2002-2026 CS GROUP, licensed under Apache-2.0. It was
+translated and modified for eopy in 2026. See
+``assets/Orekit-APACHE-2.0.txt`` and ``assets/Orekit-NOTICE.txt``.
+"""
 
 from __future__ import annotations
 

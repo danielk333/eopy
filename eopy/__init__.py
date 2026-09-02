@@ -4,8 +4,10 @@ from .atmosphere import (
     AtmosphereConfig,
     CelestrakSpaceWeather,
     SolarActivity,
-    density_dtm2000_like,
-    density_msis_like,
+    SolarActivityProvider,
+    density_dtm2000,
+    density_exponential,
+    density_msis,
 )
 from .constants import EARTH_J2, EARTH_MU, EARTH_RADIUS, MOON_MU, SUN_MU
 from .data import (

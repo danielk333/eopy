@@ -1,0 +1,16 @@
+Orekit-derived portions
+========================
+
+The DTM2000 and isotropic single-coefficient solar-radiation-pressure
+implementations in eopy include software translated and modified from Orekit.
+
+Orekit
+Copyright 2002-2026 CS GROUP
+
+Orekit is licensed under the Apache License, Version 2.0. A copy of that
+license is distributed alongside this notice as Orekit-APACHE-2.0.txt.
+
+The DTM2000 implementation includes software translated from original work
+developed by R. Biancale and S. Bruinsma (CNES).
+
+The Orekit-derived code was translated and modified for eopy in 2026.

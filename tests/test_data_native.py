@@ -152,3 +152,22 @@ def test_native_normalized_c20_matches_analytic_j2_with_truncated_order(tmp_path
         positions, model.mu, model.reference_radius, 1.0826266835531513e-3
     )
     np.testing.assert_allclose(actual, expected, rtol=0.0, atol=1e-9)
+
+
+def test_python_normalized_c20_matches_analytic_j2():
+    c = np.zeros((3, 1))
+    s = np.zeros_like(c)
+    c[0, 0] = 1.0
+    c[2, 0] = -1.0826266835531513e-3 / np.sqrt(5.0)
+    from eopy.data import GravityModel
+
+    model = GravityModel("c20", 3.986004418e14, 6378136.3, 2, 0, c, s, True)
+    positions = np.array([[7.0e6, 1.0e5, 1.0e6], [2.0e5, -6.8e6, 5.0e5]])
+    actual = gravity_acceleration(
+        positions,
+        GravityField.from_model(model, degree=2, order=0, backend="python"),
+    )
+    expected = central_gravity(positions, model.mu) + j2_acceleration(
+        positions, model.mu, model.reference_radius, 1.0826266835531513e-3
+    )
+    np.testing.assert_allclose(actual, expected, rtol=0.0, atol=2e-6)

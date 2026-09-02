@@ -1,11 +1,4 @@
-"""Atmosphere and solar-activity models.
-
-MSIS density is backed by :mod:`pymsis`. The DTM2000 function remains a compact
-placeholder until the DTM coefficient tables and Marshall solar activity reader
-are added.
-
-TODO: clean up the "like" models
-"""
+"""Exponential, DTM2000, and MSIS atmosphere density models."""
 
 from __future__ import annotations
 
@@ -15,12 +8,14 @@ from functools import lru_cache
 import math
 import csv
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 import pymsis
 from pymsis import msis as pymsis_api
 
 from .constants import EARTH_RADIUS
+from .dtm2000 import density_from_inputs as _dtm2000_density_from_inputs
 from .frames import ecef_to_geodetic_wgs84
 
 
@@ -100,6 +95,11 @@ class SolarActivity:
     f10: float = 150.0
     f10_mean: float = 150.0
     ap: float | np.ndarray = 4.0
+    kp_3h: float = 1.0
+    kp_24h: float = 1.0
+
+
+SolarActivityProvider = SolarActivity | Callable[[datetime], SolarActivity]
 
 
 class CelestrakSpaceWeather:
@@ -146,16 +146,34 @@ class CelestrakSpaceWeather:
                 float(np.mean(recent[12:20])),
             ]
         )
+        kp_recent = []
+        if "KP1" in row:
+            cursor = utc.date()
+            cursor_bin = bin_index
+            while len(kp_recent) < 8:
+                cursor_row = self._rows.get(cursor)
+                if cursor_row is None:
+                    raise ValueError(f"space weather history is unavailable before {utc.date().isoformat()}")
+                value = cursor_row.get(f"KP{cursor_bin + 1}", "")
+                if not value:
+                    raise ValueError(f"Kp is unavailable for {cursor.isoformat()} bin {cursor_bin + 1}")
+                kp_recent.append(float(value) / 10.0)
+                cursor_bin -= 1
+                if cursor_bin < 0:
+                    cursor -= timedelta(days=1)
+                    cursor_bin = 7
         return SolarActivity(
             f10=float(row["F10.7_OBS"]),
             f10_mean=float(row["F10.7_OBS_CENTER81"]),
             ap=ap,
+            kp_3h=kp_recent[0] if kp_recent else 1.0,
+            kp_24h=float(np.mean(kp_recent)) if kp_recent else 1.0,
         )
 
 
 @dataclass(slots=True)
 class AtmosphereConfig:
-    model: str = "dtm2000"
+    model: str = "exponential"
     epoch: datetime = datetime(2003, 3, 5, 0, 24, 0, tzinfo=timezone.utc)
     min_altitude_m: float = 120_000.0
     max_altitude_m: float = 1_000_000.0
@@ -173,39 +191,80 @@ def _activity_scale(activity: SolarActivity) -> float:
     return float(np.clip(f * g, 0.2, 8.0))
 
 
-def density_dtm2000_like(position_m: np.ndarray, activity: SolarActivity | None = None, config: AtmosphereConfig | None = None) -> np.ndarray:
-    """Approximate DTM2000 density shape with Marshall-style solar inputs.
-
-    TODO: implement complete DTM2000 temperature/composition equations and wire
-    a Marshall Solar Activity Future Estimation data reader.
-    TODO: include local solar time, day-of-year, geodetic latitude and sun-vector
-    dependencies; this placeholder only responds to altitude and activity.
-    """
+def density_exponential(position_m: np.ndarray, activity: SolarActivity | None = None, config: AtmosphereConfig | None = None) -> np.ndarray | float:
+    """Return the configurable scale-height density used by early eopy releases."""
 
     act = SolarActivity() if activity is None else activity
-    cfg = AtmosphereConfig(model="dtm2000") if config is None else config
+    cfg = AtmosphereConfig(model="exponential") if config is None else config
     r = np.asarray(position_m, dtype=float)
-    if r.ndim == 1:
+    single = r.ndim == 1
+    if single:
         r = r[None, :]
+    if r.ndim != 2 or r.shape[1] != 3:
+        raise ValueError("position array must have shape (3,) or (N, 3)")
+    if not np.all(np.isfinite(r)):
+        raise ValueError("exponential atmosphere inputs must contain only finite values")
     altitude = np.linalg.norm(r, axis=1) - cfg.earth_radius_m
     altitude = np.clip(altitude, cfg.min_altitude_m, cfg.max_altitude_m)
     rho = cfg.rho_ref * np.exp(-(altitude - cfg.h_ref_m) / cfg.scale_height_m)
-    return rho * _activity_scale(act)
+    rho = rho * _activity_scale(act)
+    return rho[0] if single else rho
 
 
-def density_msis_like(
+def density_dtm2000(
     position_m: np.ndarray,
-    activity: SolarActivity | None = None,
+    activity: SolarActivityProvider | None,
+    config: AtmosphereConfig,
+    *,
+    time_s: float,
+    sun_position_m: np.ndarray,
+) -> np.ndarray | float:
+    """Return DTM2000 density for Earth-fixed positions and Sun position.
+
+    Positions and ``sun_position_m`` must use the same Earth-fixed axes. The
+    returned density is in kg/m^3.
+    """
+
+    instant = config.epoch + timedelta(seconds=float(time_s))
+    act = SolarActivity() if activity is None else (activity(instant) if callable(activity) else activity)
+    r = np.asarray(position_m, dtype=float)
+    single = r.ndim == 1
+    if single:
+        r = r[None, :]
+    if r.ndim != 2 or r.shape[1] != 3:
+        raise ValueError("position array must have shape (3,) or (N, 3)")
+    sun = np.asarray(sun_position_m, dtype=float)
+    if sun.shape != (3,):
+        raise ValueError("sun_position_m must have shape (3,)")
+    if not np.all(np.isfinite(r)) or not np.all(np.isfinite(sun)):
+        raise ValueError("DTM2000 inputs must contain only finite values")
+    lats, lons, alts_m = ecef_to_geodetic_wgs84(r, degrees=False)
+    x = sun[0] * r[:, 0] + sun[1] * r[:, 1]
+    y = sun[0] * r[:, 1] - sun[1] * r[:, 0]
+    local_time = np.pi + np.arctan2(y, x)
+    day = instant.astimezone(timezone.utc).timetuple().tm_yday
+    rho = np.asarray([
+        _dtm2000_density_from_inputs(
+            day, altitude, longitude, latitude, hour_angle,
+            act.f10, act.f10_mean, act.kp_3h, act.kp_24h,
+        )
+        for altitude, longitude, latitude, hour_angle
+        in zip(alts_m, lons, lats, local_time)
+    ])
+    return rho[0] if single else rho
+
+
+def density_msis(
+    position_m: np.ndarray,
+    activity: SolarActivityProvider | None = None,
     config: AtmosphereConfig | None = None,
     *,
     time_s: float = 0.0,
-) -> np.ndarray:
+) -> np.ndarray | float:
     """Return MSIS mass density in kg/m^3 using ``pymsis``.
 
     Positions are interpreted as Earth-fixed coordinates and converted to WGS84
     geodetic latitude, longitude and altitude.
-    TODO: add Orekit-grade inertial/body-fixed frame transforms before passing
-    inertial propagation states into this model.
     """
 
     cfg = AtmosphereConfig(model="msis") if config is None else config

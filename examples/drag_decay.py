@@ -1,4 +1,4 @@
-"""Drag decay example with the lightweight DTM2000-like density model."""
+"""Drag decay example with the lightweight exponential density model."""
 
 import numpy as np
 
@@ -25,7 +25,7 @@ def run():
         0.0,
         1800.0,
         spacecraft=SpacecraftProperties(ballistic_coefficient_m2_per_kg=0.08),
-        atmosphere=AtmosphereConfig(model="dtm2000", rho_ref=8e-10, h_ref_m=250_000.0, scale_height_m=70_000.0, co_rotate=False),
+        atmosphere=AtmosphereConfig(model="exponential", rho_ref=8e-10, h_ref_m=250_000.0, scale_height_m=70_000.0, co_rotate=False),
         activity=SolarActivity(f10=180.0, f10_mean=170.0, ap=12.0),
         options=Dop853Options(rtol=1e-10, atol=1e-4, max_step=30.0),
         return_history=True,

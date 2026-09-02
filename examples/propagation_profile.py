@@ -32,7 +32,7 @@ def run(duration_s=3600.0):
             drag_area_m2=4.0,
             drag_coefficient=2.2,
         ),
-        atmosphere=AtmosphereConfig(model="dtm2000"),
+        atmosphere=AtmosphereConfig(model="exponential"),
         activity=SolarActivity(),
         radiation=RadiationPressure(
             mass_kg=500.0,

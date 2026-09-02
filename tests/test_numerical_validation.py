@@ -171,7 +171,7 @@ def test_drag_propagation_reduces_specific_orbital_energy():
         900.0,
         spacecraft=SpacecraftProperties(ballistic_coefficient_m2_per_kg=0.06),
         atmosphere=AtmosphereConfig(
-            model="dtm2000",
+            model="exponential",
             rho_ref=5e-10,
             h_ref_m=260_000.0,
             scale_height_m=70_000.0,
