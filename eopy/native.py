@@ -10,6 +10,8 @@ from pathlib import Path
 
 import numpy as np
 
+from .types import NDArray_NxM
+
 
 class NativeUnavailableError(RuntimeError):
     pass
@@ -82,7 +84,7 @@ def _load() -> CDLL:
                 POINTER(c_double),
             ]
             lib.eopy_central_j2_accel_batch.restype = c_int
-            lib.eopy_holmes_featherstone_accel.argtypes = [
+            lib.eopy_spherical_harmonic_accel.argtypes = [
                 c_size_t,
                 POINTER(c_double),
                 c_size_t,
@@ -94,10 +96,10 @@ def _load() -> CDLL:
                 c_int,
                 POINTER(c_double),
             ]
-            lib.eopy_holmes_featherstone_accel.restype = c_int
+            lib.eopy_spherical_harmonic_accel.restype = c_int
             _LIB = lib
             return lib
-        except OSError as exc:
+        except (OSError, AttributeError) as exc:
             _LOAD_ERROR = exc
     raise NativeUnavailableError(library_diagnostics()) from _LOAD_ERROR
 
@@ -114,17 +116,19 @@ def version() -> str:
     return _load().eopy_native_version().decode("ascii")
 
 
-def _as_position_batch(position_m: np.ndarray) -> tuple[np.ndarray, bool]:
+def _as_position_batch(position_m: NDArray_NxM) -> tuple[NDArray_NxM, bool]:
     arr = np.asarray(position_m, dtype=np.float64)
     single = arr.ndim == 1
     if single:
         arr = arr[None, :]
-    if arr.shape[-1] != 3:
+    if arr.ndim != 2 or arr.shape[1] != 3:
         raise ValueError("position array must have shape (3,) or (N, 3)")
     return np.ascontiguousarray(arr), single
 
 
-def central_j2_acceleration(position_m: np.ndarray, mu: float, reference_radius: float, j2: float) -> np.ndarray:
+def central_j2_acceleration(
+    position_m: NDArray_NxM, mu: float, reference_radius: float, j2: float
+) -> NDArray_NxM:
     position, single = _as_position_batch(position_m)
     out = np.empty_like(position)
     status = _load().eopy_central_j2_accel_batch(
@@ -140,28 +144,29 @@ def central_j2_acceleration(position_m: np.ndarray, mu: float, reference_radius:
     return out[0] if single else out
 
 
-def holmes_featherstone_acceleration(
-    position_m: np.ndarray,
-    *,
+def spherical_harmonic_acceleration(
+    position_m: NDArray_NxM,
     degree: int,
     order: int,
-    c: np.ndarray,
-    s: np.ndarray | None,
+    c: NDArray_NxM,
+    s: NDArray_NxM | None,
     mu: float,
     reference_radius: float,
     normalized: bool,
-) -> np.ndarray:
+) -> NDArray_NxM:
     position, single = _as_position_batch(position_m)
+    if degree < 0 or order < 0 or order > degree:
+        raise ValueError("require 0 <= order <= degree")
     c_source = np.asarray(c, dtype=np.float64)
     s_source = np.zeros_like(c_source) if s is None else np.asarray(s, dtype=np.float64)
+    if c_source.ndim != 2 or s_source.shape != c_source.shape:
+        raise ValueError("c and s must be matching two-dimensional arrays")
     c_arr = np.ascontiguousarray(c_source[: degree + 1, : order + 1])
     s_arr = np.ascontiguousarray(s_source[: degree + 1, : order + 1])
-    if c_arr.ndim != 2 or s_arr.shape != c_arr.shape:
-        raise ValueError("c and s must be two-dimensional arrays with matching shape")
     if degree >= c_source.shape[0] or order >= c_source.shape[1]:
         raise ValueError("degree/order exceed coefficient array shape")
     out = np.empty_like(position)
-    status = _load().eopy_holmes_featherstone_accel(
+    status = _load().eopy_spherical_harmonic_accel(
         position.shape[0],
         position.ctypes.data_as(POINTER(c_double)),
         int(degree),
@@ -174,5 +179,5 @@ def holmes_featherstone_acceleration(
         out.ctypes.data_as(POINTER(c_double)),
     )
     if status:
-        raise NativeKernelError(f"eopy_holmes_featherstone_accel failed with status {status}")
+        raise NativeKernelError(f"eopy_spherical_harmonic_accel failed with status {status}")
     return out[0] if single else out

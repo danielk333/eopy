@@ -1,211 +1,119 @@
 #include "eopy_kernels.h"
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
 namespace {
-
 constexpr double kEpsilon = 1.0e-300;
 
-double associated_legendre(int n, int m, double x) {
-    if (m < 0 || m > n) {
-        return 0.0;
-    }
-    double pmm = 1.0;
-    if (m > 0) {
-        const double somx2 = std::sqrt(std::max(0.0, (1.0 - x) * (1.0 + x)));
-        double fact = 1.0;
-        for (int i = 1; i <= m; ++i) {
-            // Geodesy/ICGEM associated Legendre functions do not include the
-            // Condon-Shortley (-1)^m phase used by many physics libraries.
-            pmm *= fact * somx2;
-            fact += 2.0;
+// Real geodesy (4pi) normalization, no Condon-Shortley phase.
+// Standard three-term recurrence; normalization definitions:
+// Wieczorek & Meschede (2018), doi:10.1029/2018GC007529.
+// Differentiate the recurrence with respect to latitude to avoid division
+// by sin(latitude)^2 - 1 near polar passages.
+void legendre(size_t degree, double latitude, bool normalized,
+              std::vector<double>& p, std::vector<double>& dp) {
+    const size_t width = degree + 1;
+    p.assign(width * width, 0.0);
+    dp.assign(width * width, 0.0);
+    const double x = std::sin(latitude), y = std::cos(latitude);
+    p[0] = 1.0;
+    for (size_t m = 0; m <= degree; ++m) {
+        const size_t i = m * width + m;
+        if (m > 0) {
+            const size_t prev = (m - 1) * width + m - 1;
+            const double factor = normalized
+                ? (m == 1 ? std::sqrt(3.0) : std::sqrt((2.0*m+1)/(2.0*m)))
+                : 2.0*m-1;
+            p[i] = factor * y * p[prev];
+            dp[i] = factor * (-x * p[prev] + y * dp[prev]);
+        }
+        if (m < degree) {
+            const double factor = normalized ? std::sqrt(2.0*m+3) : 2.0*m+1;
+            p[i + width] = factor * x * p[i];
+            dp[i + width] = factor * (y * p[i] + x * dp[i]);
+        }
+        for (size_t n = m + 2; n <= degree; ++n) {
+            const double a = normalized
+                ? std::sqrt((4.0*n*n-1)/(double(n*n)-double(m*m)))
+                : (2.0*n-1)/(n-m);
+            const double b = normalized
+                ? std::sqrt(((2.0*n+1)*((n-1.0)*(n-1.0)-m*m))/
+                            ((2.0*n-3)*(double(n*n)-double(m*m))))
+                : (n+m-1.0)/(n-m);
+            const size_t j = n * width + m;
+            p[j] = a*x*p[j-width] - b*p[j-2*width];
+            dp[j] = a*(y*p[j-width]+x*dp[j-width]) - b*dp[j-2*width];
         }
     }
-    if (n == m) {
-        return pmm;
-    }
-    double pmmp1 = x * static_cast<double>(2 * m + 1) * pmm;
-    if (n == m + 1) {
-        return pmmp1;
-    }
-    double pll = 0.0;
-    for (int ll = m + 2; ll <= n; ++ll) {
-        pll = (static_cast<double>(2 * ll - 1) * x * pmmp1 - static_cast<double>(ll + m - 1) * pmm) /
-              static_cast<double>(ll - m);
-        pmm = pmmp1;
-        pmmp1 = pll;
-    }
-    return pll;
 }
 
-double fully_normalized_scale(int n, int m) {
-    const double delta = m == 0 ? 1.0 : 0.0;
-    return std::sqrt((2.0 - delta) * static_cast<double>(2 * n + 1)) *
-           std::exp(0.5 * (std::lgamma(static_cast<double>(n - m + 1)) -
-                           std::lgamma(static_cast<double>(n + m + 1))));
-}
-
-double harmonic_potential(
-    const double* r,
-    size_t degree,
-    size_t order,
-    const double* c,
-    const double* s,
-    double mu,
-    double reference_radius,
-    bool normalized
-) {
-    const double x = r[0];
-    const double y = r[1];
-    const double z = r[2];
-    const double rho = std::sqrt(x * x + y * y + z * z);
-    if (rho <= kEpsilon) {
-        return 0.0;
-    }
-    const double sin_lat = z / rho;
-    const double lon = std::atan2(y, x);
-    const size_t stride = order + 1;
-    double series = 0.0;
-    double rr_n = 1.0;
-    for (size_t n = 0; n <= degree; ++n) {
-        if (n > 0) {
-            rr_n *= reference_radius / rho;
+double potential(const double* r, size_t degree, size_t order,
+                 const double* c, const double* s, double mu, double radius,
+                 bool normalized) {
+    const double rho = std::hypot(std::hypot(r[0], r[1]), r[2]);
+    const double latitude = std::atan2(r[2], std::hypot(r[0], r[1]));
+    const double longitude = std::atan2(r[1], r[0]);
+    std::vector<double> p, dp;
+    legendre(degree, latitude, normalized, p, dp);
+    double sum = 0.0, power = 1.0;
+    for (size_t n=0; n<=degree; ++n) {
+        for (size_t m=0; m<=std::min(n,order); ++m) {
+            const size_t i=n*(order+1)+m;
+            sum += power*p[n*(degree+1)+m]*(c[i]*std::cos(m*longitude)+
+                   (s ? s[i] : 0.0)*std::sin(m*longitude));
         }
-        const size_t max_m = std::min(order, n);
-        for (size_t m = 0; m <= max_m; ++m) {
-            const double c_nm = c[n * stride + m];
-            const double s_nm = s == nullptr ? 0.0 : s[n * stride + m];
-            if (c_nm == 0.0 && s_nm == 0.0) {
-                continue;
-            }
-            const int ni = static_cast<int>(n);
-            const int mi = static_cast<int>(m);
-            double p_nm = associated_legendre(ni, mi, sin_lat);
-            if (normalized) {
-                p_nm *= fully_normalized_scale(ni, mi);
-            }
-            series += rr_n * p_nm * (c_nm * std::cos(static_cast<double>(m) * lon) +
-                                     s_nm * std::sin(static_cast<double>(m) * lon));
-        }
+        power *= radius/rho;
     }
-    return mu / rho * series;
+    return mu/rho*sum;
 }
 
-bool harmonic_acceleration(
-    const double* r,
-    size_t degree,
-    size_t order,
-    const double* c,
-    const double* s,
-    double mu,
-    double reference_radius,
-    bool normalized,
-    double* acceleration
-) {
-    const double x_cart = r[0];
-    const double y_cart = r[1];
-    const double z_cart = r[2];
-    const double rho = std::sqrt(x_cart * x_cart + y_cart * y_cart + z_cart * z_cart);
-    if (rho <= kEpsilon) {
-        return false;
-    }
-    const double sin_phi = z_cart / rho;
-    const double cos_phi = std::hypot(x_cart, y_cart) / rho;
-    // Polar passages are rare evaluation points and the finite-difference
-    // potential is robust there, unlike longitude-based spherical formulas.
-    if (cos_phi < 1.0e-10) {
-        const double step = std::max(0.1, 1.0e-7 * rho);
-        for (size_t axis = 0; axis < 3; ++axis) {
-            double rp[3] = {r[0], r[1], r[2]};
-            double rm[3] = {r[0], r[1], r[2]};
-            rp[axis] += step;
-            rm[axis] -= step;
-            acceleration[axis] =
-                (harmonic_potential(rp, degree, order, c, s, mu, reference_radius, normalized) -
-                 harmonic_potential(rm, degree, order, c, s, mu, reference_radius, normalized)) /
-                (2.0 * step);
+bool harmonic_acceleration(const double* r, size_t degree, size_t order,
+                           const double* c, const double* s, double mu,
+                           double radius, bool normalized, double* acceleration) {
+    const double horizontal=std::hypot(r[0],r[1]);
+    const double rho=std::hypot(horizontal,r[2]);
+    if (rho <= kEpsilon) return false;
+    if (horizontal/rho < 1e-8) {
+        const double step=std::max(0.1,1e-7*rho);
+        for (size_t axis=0; axis<3; ++axis) {
+            double rp[3]={r[0],r[1],r[2]}, rm[3]={r[0],r[1],r[2]};
+            rp[axis]+=step; rm[axis]-=step;
+            acceleration[axis]=(potential(rp,degree,order,c,s,mu,radius,normalized)-
+                                potential(rm,degree,order,c,s,mu,radius,normalized))/(2*step);
         }
         return true;
     }
-
-    const double longitude = std::atan2(y_cart, x_cart);
-    const size_t width = degree + 1;
-    std::vector<double> p(width * width, 0.0);
-    auto at = [width, &p](size_t n, size_t m) -> double& { return p[n * width + m]; };
-    at(0, 0) = 1.0;
-    for (size_t m = 1; m <= degree; ++m) {
-        at(m, m) = static_cast<double>(2 * m - 1) * cos_phi * at(m - 1, m - 1);
-    }
-    for (size_t m = 0; m < degree; ++m) {
-        at(m + 1, m) = static_cast<double>(2 * m + 1) * sin_phi * at(m, m);
-    }
-    for (size_t m = 0; m <= degree; ++m) {
-        for (size_t n = m + 2; n <= degree; ++n) {
-            at(n, m) =
-                (static_cast<double>(2 * n - 1) * sin_phi * at(n - 1, m) -
-                 static_cast<double>(n + m - 1) * at(n - 2, m)) /
-                static_cast<double>(n - m);
+    const double latitude=std::atan2(r[2],horizontal), longitude=std::atan2(r[1],r[0]);
+    std::vector<double> p, dp;
+    legendre(degree,latitude,normalized,p,dp);
+    double radial=0, north=0, east=0, power=1;
+    for (size_t n=0; n<=degree; ++n) {
+        for (size_t m=0; m<=std::min(n,order); ++m) {
+            const size_t i=n*(order+1)+m, j=n*(degree+1)+m;
+            const double cosine=std::cos(m*longitude), sine=std::sin(m*longitude);
+            const double snm=s ? s[i] : 0.0, trig=c[i]*cosine+snm*sine;
+            radial -= (n+1)*power*p[j]*trig;
+            north += power*dp[j]*trig;
+            east += power*p[j]*m*(-c[i]*sine+snm*cosine);
         }
+        power *= radius/rho;
     }
-
-    double radial_sum = 0.0;
-    double latitude_sum = 0.0;
-    double longitude_sum = 0.0;
-    double radius_power = 1.0;
-    const size_t stride = order + 1;
-    for (size_t n = 0; n <= degree; ++n) {
-        if (n > 0) {
-            radius_power *= reference_radius / rho;
-        }
-        const size_t max_m = std::min(order, n);
-        for (size_t m = 0; m <= max_m; ++m) {
-            const double c_nm = c[n * stride + m];
-            const double s_nm = s == nullptr ? 0.0 : s[n * stride + m];
-            if (c_nm == 0.0 && s_nm == 0.0) {
-                continue;
-            }
-            const double scale = normalized
-                ? fully_normalized_scale(static_cast<int>(n), static_cast<int>(m))
-                : 1.0;
-            const double p_nm = at(n, m) * scale;
-            const double angle = static_cast<double>(m) * longitude;
-            const double cosine = std::cos(angle);
-            const double sine = std::sin(angle);
-            const double trig = c_nm * cosine + s_nm * sine;
-            radial_sum += static_cast<double>(n + 1) * radius_power * p_nm * trig;
-            if (n > 0) {
-                const double previous = n == m ? 0.0 : at(n - 1, m);
-                const double dp_dx =
-                    (static_cast<double>(n) * sin_phi * at(n, m) -
-                     static_cast<double>(n + m) * previous) /
-                    (sin_phi * sin_phi - 1.0);
-                latitude_sum += radius_power * (cos_phi * dp_dx * scale) * trig;
-            }
-            if (m > 0) {
-                longitude_sum += radius_power * p_nm * static_cast<double>(m) *
-                    (-c_nm * sine + s_nm * cosine);
-            }
-        }
-    }
-
-    const double radial = -mu * radial_sum / (rho * rho);
-    const double north = mu * latitude_sum / (rho * rho);
-    const double east = mu * longitude_sum / (rho * rho * cos_phi);
-    const double cos_lon = std::cos(longitude);
-    const double sin_lon = std::sin(longitude);
-    acceleration[0] = radial * cos_phi * cos_lon - north * sin_phi * cos_lon - east * sin_lon;
-    acceleration[1] = radial * cos_phi * sin_lon - north * sin_phi * sin_lon + east * cos_lon;
-    acceleration[2] = radial * sin_phi + north * cos_phi;
+    radial *= mu/(rho*rho); north *= mu/(rho*rho);
+    east *= mu/(rho*horizontal);
+    const double cp=horizontal/rho, sp=r[2]/rho, cl=std::cos(longitude), sl=std::sin(longitude);
+    acceleration[0]=radial*cp*cl-north*sp*cl-east*sl;
+    acceleration[1]=radial*cp*sl-north*sp*sl+east*cl;
+    acceleration[2]=radial*sp+north*cp;
     return true;
 }
-
-}  // namespace
+} // namespace
 
 extern "C" {
 
 const char* eopy_native_version(void) {
-    return "0.1.0";
+    return "1.0.0rc1";
 }
 
 int eopy_central_j2_accel_batch(
@@ -245,7 +153,7 @@ int eopy_central_j2_accel_batch(
     return 0;
 }
 
-int eopy_holmes_featherstone_accel(
+int eopy_spherical_harmonic_accel(
     size_t count,
     const double* position_m,
     size_t degree,
@@ -260,6 +168,7 @@ int eopy_holmes_featherstone_accel(
     if (position_m == nullptr || c == nullptr || acceleration_mps2 == nullptr) {
         return 1;
     }
+    try {
     const bool use_normalized = normalized != 0;
     for (size_t i = 0; i < count; ++i) {
         const double* r = position_m + 3 * i;
@@ -270,6 +179,9 @@ int eopy_holmes_featherstone_accel(
         }
     }
     return 0;
+    } catch (...) {
+        return 3; // Allocation or other C++ failure; never unwind across the C ABI.
+    }
 }
 
 }

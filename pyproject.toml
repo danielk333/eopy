@@ -1,10 +1,10 @@
 [build-system]
-requires = ["scikit-build-core>=0.10", "setuptools>=68"]
+requires = ["scikit-build-core>=0.12"]
 build-backend = "scikit_build_core.build"
 
 [project]
 name = "eopy"
-version = "0.1.0"
+version = "1.0.0rc1"
 description = "Fast Python Earth orbit propagation kernels with NumPy/SciPy"
 readme = "README.md"
 license = "GPL-3.0-only"
@@ -18,7 +18,13 @@ dependencies = [
     "scipy>=1.11",
     "spacecoords>=0.2.2",
 ]
+[project.urls]
+Repository = "https://gitlab.irf.se/danielk/eopy"
+Issues = "https://gitlab.irf.se/danielk/eopy/-/issues"
+
 [project.optional-dependencies]
+tests = ["pytest>=8", "matplotlib>=3.8", "sgp4>=2.23"]
+develop = ["eopy[tests]", "ruff>=0.9", "mypy>=1.15", "build>=1.2", "twine>=6"]
 examples = ["matplotlib>=3.8", "sgp4>=2.23"]
 
 [tool.scikit-build]
@@ -28,3 +34,19 @@ cmake.version = ">=3.18"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.mypy]
+files = ["eopy"]
+check_untyped_defs = true
+disallow_untyped_defs = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["scipy.*", "spacecoords.*", "pymsis.*", "astropy.*"]
+ignore_missing_imports = true

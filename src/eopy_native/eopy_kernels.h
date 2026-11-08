@@ -21,7 +21,7 @@ EOPY_EXPORT int eopy_central_j2_accel_batch(
     double* acceleration_mps2
 );
 
-EOPY_EXPORT int eopy_holmes_featherstone_accel(
+EOPY_EXPORT int eopy_spherical_harmonic_accel(
     size_t count,
     const double* position_m,
     size_t degree,

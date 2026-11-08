@@ -20,8 +20,8 @@ from .data import (
     download_space_weather,
     read_icgem_gfc,
 )
-from .gravity import GravityField, gravity_acceleration
 from .frames import EarthOrientation, interpolated_earth_orientation
+from .gravity import GravityField, gravity_acceleration
 from .integrators import Dop853Options, integrate_dop853
 from .profiling import EffectTiming, PropagationProfile
 from .propagator import SpacecraftProperties, propagate
@@ -37,3 +37,5 @@ from .third_body import (
     interpolated_astropy_body_providers,
     third_body_acceleration,
 )
+
+from .version import __version__
