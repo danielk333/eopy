@@ -97,6 +97,6 @@ pypi:
   script:
     - python -m pip install twine
     - python -m twine check dist/* wheelhouse/*
-    - TWINE_USERNAME=__token__ TWINE_PASSWORD="$PYPI_TOKEN" python -m twine upload dist/* wheelhouse/*
+    - TWINE_USERNAME=__token__ TWINE_PASSWORD="${PYPI_TOKEN:?Set PYPI_TOKEN in GitLab CI variables}" python -m twine upload --non-interactive --verbose dist/* wheelhouse/*
   only:
     - tags
