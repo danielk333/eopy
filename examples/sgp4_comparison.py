@@ -14,7 +14,6 @@ from eopy.gravity import GravityField
 from eopy.integrators import Dop853Options
 from eopy.propagator import propagate
 
-
 # The Vanguard 1 TLE is from the python-sgp4 documentation.  The second is a
 # representative near-circular orbit at approximately 800 km altitude, where
 # drag is much weaker.  Fixed TLEs make the comparison reproducible.
@@ -93,7 +92,11 @@ if __name__ == "__main__":
             result["position_difference_m"] / 1_000.0,
             label=name,
         )
-    ax.set(title="eopy J2 propagation versus SGP4", xlabel="Time since TLE epoch [h]", ylabel="Position difference [km]")
+    ax.set(
+        title="eopy J2 propagation versus SGP4",
+        xlabel="Time since TLE epoch [h]",
+        ylabel="Position difference [km]",
+    )
     ax.grid(True)
     ax.legend()
     plt.tight_layout()

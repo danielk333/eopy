@@ -22,7 +22,12 @@ def run():
         options=Dop853Options(rtol=1e-11, atol=1e-6, max_step=60.0),
         return_history=True,
     )
-    return {"time_s": t, "states": states, "final_error_m": np.linalg.norm(states[-1, :3] - state0[:3]), "stats": stats}
+    return {
+        "time_s": t,
+        "states": states,
+        "final_error_m": np.linalg.norm(states[-1, :3] - state0[:3]),
+        "stats": stats,
+    }
 
 
 if __name__ == "__main__":

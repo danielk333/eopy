@@ -10,6 +10,8 @@ EXAMPLES = [
     "examples.srp_shadow",
     "examples.third_body_sun",
     "examples.propagation_profile",
+    "examples.atmosphere_models",
+    "examples.relativity",
 ]
 
 

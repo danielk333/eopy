@@ -10,8 +10,8 @@ from pathlib import Path
 import numpy as np
 
 from eopy.data import DEFAULT_GRAVITY_MODEL_URL, download_gravity_model, read_icgem_gfc
-from eopy.gravity import GravityField
 from eopy.frames import interpolated_earth_orientation
+from eopy.gravity import GravityField
 from eopy.integrators import Dop853Options
 from eopy.propagator import propagate
 
@@ -82,20 +82,45 @@ def run(
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group()
-    source.add_argument("--gravity-model", help="Path to an existing ICGEM .gfc gravity model file.")
-    source.add_argument("--gravity-url", default=DEFAULT_GRAVITY_MODEL_URL, help="URL to download an ICGEM .gfc gravity model file.")
+    source.add_argument(
+        "--gravity-model", help="Path to an existing ICGEM .gfc gravity model file."
+    )
+    source.add_argument(
+        "--gravity-url",
+        default=DEFAULT_GRAVITY_MODEL_URL,
+        help="URL to download an ICGEM .gfc gravity model file.",
+    )
     parser.add_argument("--data-dir", help="Directory used for downloaded gravity model files.")
     parser.add_argument("--filename", help="Cached filename to use with --gravity-url.")
     parser.add_argument("--sha256", help="Expected SHA256 for the downloaded gravity model.")
-    parser.add_argument("--refresh", action="store_true", help="Redownload the model even if it already exists.")
-    parser.add_argument("--native-library", help="Path to libeopykernels shared library from an out-of-tree build.")
-    parser.add_argument("--backend", choices=["native", "auto", "python"], default="native", help="Gravity backend to use.")
+    parser.add_argument(
+        "--refresh", action="store_true", help="Redownload the model even if it already exists."
+    )
+    parser.add_argument(
+        "--native-library", help="Path to libeopykernels shared library from an out-of-tree build."
+    )
+    parser.add_argument(
+        "--backend",
+        choices=["native", "auto", "python"],
+        default="native",
+        help="Gravity backend to use.",
+    )
     parser.add_argument("--degree", type=int, default=8, help="Maximum gravity degree to load.")
     parser.add_argument("--order", type=int, default=10, help="Maximum gravity order to load.")
-    parser.add_argument("--duration", type=float, default=1800.0, help="Propagation duration in seconds.")
-    parser.add_argument("--max-step", type=float, default=60.0, help="Integrator maximum step in seconds.")
-    parser.add_argument("--epoch", default="2024-01-01T00:00:00+00:00", help="UTC coefficient and propagation epoch.")
-    parser.add_argument("--no-plot", action="store_true", help="Do not display the propagation plot.")
+    parser.add_argument(
+        "--duration", type=float, default=1800.0, help="Propagation duration in seconds."
+    )
+    parser.add_argument(
+        "--max-step", type=float, default=60.0, help="Integrator maximum step in seconds."
+    )
+    parser.add_argument(
+        "--epoch",
+        default="2024-01-01T00:00:00+00:00",
+        help="UTC coefficient and propagation epoch.",
+    )
+    parser.add_argument(
+        "--no-plot", action="store_true", help="Do not display the propagation plot."
+    )
     return parser
 
 
@@ -125,7 +150,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Model: {result['model_name']}")
     print(f"Path: {result['model_path']}")
     print(f"Backend: {result['backend']}")
-    print(f"Accepted steps: {result['stats'].accepted_steps}")
+    print(f"Force evaluations: {result['stats'].function_evals}")
     print(f"Final altitude: {result['altitude_m'][-1] / 1000.0:.3f} km")
 
     if not args.no_plot:

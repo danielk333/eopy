@@ -59,7 +59,9 @@ def run():
     )
     state_j2 = states_j2[-1]
     state_two_body = states_two_body[-1]
-    normal_change = np.linalg.norm(_angular_momentum_unit(state_j2) - _angular_momentum_unit(state_two_body))
+    normal_change = np.linalg.norm(
+        _angular_momentum_unit(state_j2) - _angular_momentum_unit(state_two_body)
+    )
     elements = _orbital_elements_from_pyorb(states_j2)
     return {
         "time_s": t_j2,
@@ -93,7 +95,9 @@ if __name__ == "__main__":
     elements = result["elements"]
     fig, axes = plt.subplots(3, 2, figsize=(10, 8), sharex=True)
     time_orbits = result["time_s"] / result["time_s"][-1] * 5.0
-    axes[0, 0].plot(time_orbits, (elements["semi_major_axis_m"] - elements["semi_major_axis_m"][0]) / 1000.0)
+    axes[0, 0].plot(
+        time_orbits, (elements["semi_major_axis_m"] - elements["semi_major_axis_m"][0]) / 1000.0
+    )
     axes[0, 0].set_ylabel("a - a0 [km]")
     axes[0, 1].plot(time_orbits, elements["eccentricity"])
     axes[0, 1].set_ylabel("e")

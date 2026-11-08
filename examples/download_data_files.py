@@ -5,7 +5,13 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from eopy.data import DEFAULT_GRAVITY_MODEL_URL, download_eop, download_file, download_gravity_model, download_space_weather
+from eopy.data import (
+    DEFAULT_GRAVITY_MODEL_URL,
+    download_eop,
+    download_file,
+    download_gravity_model,
+    download_space_weather,
+)
 
 
 def download_requested_files(
@@ -38,13 +44,23 @@ def download_requested_files(
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("target_dir", help="Folder where downloaded files should be stored.")
-    parser.add_argument("--gravity-url", default=DEFAULT_GRAVITY_MODEL_URL, help="URL to an ICGEM-compatible .gfc gravity model.")
+    parser.add_argument(
+        "--gravity-url",
+        default=DEFAULT_GRAVITY_MODEL_URL,
+        help="URL to an ICGEM-compatible .gfc gravity model.",
+    )
     parser.add_argument("--gravity-filename", help="Filename to use for the cached gravity model.")
-    parser.add_argument("--gravity-sha256", help="Expected SHA256 for the downloaded gravity model.")
+    parser.add_argument(
+        "--gravity-sha256", help="Expected SHA256 for the downloaded gravity model."
+    )
     parser.add_argument("--no-gravity", action="store_true", help="Skip gravity model download.")
-    parser.add_argument("--no-space-weather", action="store_true", help="Skip CelesTrak space-weather CSV download.")
+    parser.add_argument(
+        "--no-space-weather", action="store_true", help="Skip CelesTrak space-weather CSV download."
+    )
     parser.add_argument("--no-eop", action="store_true", help="Skip CelesTrak EOP CSV download.")
-    parser.add_argument("--refresh", action="store_true", help="Redownload files even if they already exist.")
+    parser.add_argument(
+        "--refresh", action="store_true", help="Redownload files even if they already exist."
+    )
     parser.add_argument(
         "--url",
         action="append",

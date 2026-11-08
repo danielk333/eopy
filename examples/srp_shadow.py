@@ -25,7 +25,13 @@ def run():
         return_history=True,
     )
     shadow = cylindrical_shadow_factor(states[:, :3], sun)
-    return {"time_s": t, "states": states, "state": states[-1], "shadow": shadow, "initial_shadow": shadow[0]}
+    return {
+        "time_s": t,
+        "states": states,
+        "state": states[-1],
+        "shadow": shadow,
+        "initial_shadow": shadow[0],
+    }
 
 
 if __name__ == "__main__":

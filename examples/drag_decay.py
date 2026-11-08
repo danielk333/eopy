@@ -13,7 +13,9 @@ def _specific_energy(state):
 
 
 def _specific_energy_history(states):
-    return 0.5 * np.sum(states[:, 3:] * states[:, 3:], axis=1) - EARTH_MU / np.linalg.norm(states[:, :3], axis=1)
+    return 0.5 * np.sum(states[:, 3:] * states[:, 3:], axis=1) - EARTH_MU / np.linalg.norm(
+        states[:, :3], axis=1
+    )
 
 
 def run():
@@ -25,13 +27,24 @@ def run():
         0.0,
         1800.0,
         spacecraft=SpacecraftProperties(ballistic_coefficient_m2_per_kg=0.08),
-        atmosphere=AtmosphereConfig(model="exponential", rho_ref=8e-10, h_ref_m=250_000.0, scale_height_m=70_000.0, co_rotate=False),
+        atmosphere=AtmosphereConfig(
+            model="exponential",
+            rho_ref=8e-10,
+            h_ref_m=250_000.0,
+            scale_height_m=70_000.0,
+            co_rotate=False,
+        ),
         activity=SolarActivity(f10=180.0, f10_mean=170.0, ap=12.0),
         options=Dop853Options(rtol=1e-10, atol=1e-4, max_step=30.0),
         return_history=True,
     )
     state = states[-1]
-    return {"time_s": t, "states": states, "state": state, "energy_delta": _specific_energy(state) - _specific_energy(state0)}
+    return {
+        "time_s": t,
+        "states": states,
+        "state": state,
+        "energy_delta": _specific_energy(state) - _specific_energy(state0),
+    }
 
 
 if __name__ == "__main__":

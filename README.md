@@ -4,10 +4,9 @@ Earth orbits in Python: a compact, fast propagation designed around NumPy arrays
 so computationally heavy pieces can later move to low level implementations without changing the
 public shape of the code.
 
-eopy is licensed under the GNU General Public License version 3. The DTM2000
-and isotropic radiation-pressure implementations contain modified portions
-adapted from Apache-2.0-licensed Orekit; the applicable upstream license and
-attribution notices are included in `eopy/assets/`.
+eopy is licensed under the GNU General Public License version 3. The DTM2000 and isotropic
+radiation-pressure implementations contain modified portions adapted from Apache-2.0-licensed
+Orekit; the applicable upstream license and attribution notices are included in `eopy/assets/`.
 
 ## AI usage disclaimer
 
@@ -53,11 +52,10 @@ The native API is loaded through `ctypes`.
 
 ## Precision propagation
 
-High-degree gravity models are defined in ITRS, while propagated Cartesian
-states are normally GCRS. Build an Earth-orientation provider and pass it with
-the gravity field so tesseral harmonics and atmospheric drag are evaluated in
-the correct rotating frame. Time-variable ICGEM 2.0 models also require an
-evaluation epoch:
+High-degree gravity models are defined in ITRS, while propagated Cartesian states are normally GCRS.
+Build an Earth-orientation provider and pass it with the gravity field so tesseral harmonics and
+atmospheric drag are evaluated in the correct rotating frame. Time-variable ICGEM 2.0 models also
+require an evaluation epoch:
 
 ```python
 from datetime import datetime, timezone
@@ -74,16 +72,14 @@ orientation = interpolated_earth_orientation(epoch, 0.0, 86400.0)
 field = GravityField.from_model(model, degree=120, order=120, backend="native")
 ```
 
-`propagate(..., sample_times=epochs)` evaluates a single continuous DOP853
-solution at requested offsets.  Historical MSIS inputs can be loaded with
-`CelestrakSpaceWeather.from_csv("SW-All.csv")`.
+`propagate(..., sample_times=epochs)` evaluates a single continuous DOP853 solution at requested
+offsets.  Historical MSIS inputs can be loaded with `CelestrakSpaceWeather.from_csv("SW-All.csv")`.
 
-The default atmosphere is the lightweight configurable exponential model.
-DTM2000 propagation must be selected explicitly and supplied with both an
-`EarthOrientation` and an inertial `sun_position` provider; this ensures its
-longitude, season, and local-solar-time terms are evaluated in the correct
-Earth-fixed frame. CelesTrak space-weather files provide both the Ap history
-used by MSIS and the Kp history used by DTM2000.
+The default atmosphere is the lightweight configurable exponential model. DTM2000 propagation must
+be selected explicitly and supplied with both an `EarthOrientation` and an inertial `sun_position`
+provider; this ensures its longitude, season, and local-solar-time terms are evaluated in the
+correct Earth-fixed frame. CelesTrak space-weather files provide both the Ap history used by MSIS
+and the Kp history used by DTM2000.
 
 ## Example
 
@@ -148,28 +144,27 @@ pip install '.[develop]'
 pytest --ignore=tests/precision_orbit
 ```
 
-`propagate` accepts a single `(6,)` state or an `(N, 6)` batch, in metres and
-metres/second. Times are seconds relative to the epoch supplied to frame,
-ephemeris, and atmosphere providers. Use timezone-aware UTC epochs. Force
-providers must share those axes and epoch. History is `(T, 6)` or `(T, N, 6)`;
-without history, the final state has the input shape. Built-in events apply to
-one spacecraft; custom events receive the batch and return a scalar.
+`propagate` accepts a single `(6,)` state or an `(N, 6)` batch, in metres and metres/second. Times
+are seconds relative to the epoch supplied to frame, ephemeris, and atmosphere providers. Use
+timezone-aware UTC epochs. Force providers must share those axes and epoch. History is `(T, 6)` or
+`(T, N, 6)`; without history, the final state has the input shape. Built-in events apply to one
+spacecraft; custom events receive the batch and return a scalar.
 
-`sample_times` requests output along the integration direction, including for
-backward propagation. A terminal event can leave an empty requested history;
-its state and time remain in the statistics. Zero-duration integration returns
-the initial state without evaluating forces or events. For sampled integrations,
-accepted/rejected internal step counts are unavailable; use `function_evals`.
+`sample_times` requests output along the integration direction, including for backward propagation.
+A terminal event can leave an empty requested history; its state and time remain in the statistics.
+Zero-duration integration returns the initial state without evaluating forces or events. For sampled
+integrations, accepted/rejected internal step counts are unavailable; use `function_evals`.
 
-Use `backend="native"` for high-degree gravity to require compiled kernels;
-`"auto"` falls back to Python and `"python"` explicitly selects it. The Python
-harmonic implementation is intended for low-degree validation. Native load errors
-include build and search diagnostics. Interpolated providers reject requests
-outside their coverage. Atmosphere altitude clipping, default activity, and the
-exponential approximation should be considered when interpreting results.
+Use `backend="native"` for high-degree gravity to require compiled kernels; `"auto"` prefers
+"`native"` but falls back to Python and `"python"` uses Python. The Python harmonic implementation
+is intended for low-degree validation.
 
-Run `python examples/atmosphere_models.py` for MSIS/DTM2000 density and relativity
-examples. See [scientific validation and limitations](docs/validation.md),
-[release checks](docs/releasing.md), and [migration notes](CHANGELOG.md).
-The [public interface reference](docs/api.md) describes force inputs, callbacks,
-configuration, and return values.
+Run `python examples/atmosphere_models.py` for MSIS/DTM2000 density and `examples/relativity.py`
+relativity examples. See The [public interface reference](docs/api.md) describes force inputs,
+callbacks, configuration, and return values.
+
+### Remeber
+
+Interpolated providers reject requests outside their coverage. Atmosphere altitude clipping, default
+activity, and the exponential approximation should be considered when interpreting results.
+
