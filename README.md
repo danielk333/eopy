@@ -9,6 +9,13 @@ and isotropic radiation-pressure implementations contain modified portions
 adapted from Apache-2.0-licensed Orekit; the applicable upstream license and
 attribution notices are included in `eopy/assets/`.
 
+## AI usage disclaimer
+
+GPT-5.6-sol was used to produce an initial translation of most of the tests and data-reading
+methods, which were then used as a basis for translating the code from Java to Python. It was also
+used to check for discrepencies in implementation and to implement much of the boilerplate needed,
+such as file downloading and visualization.
+
 ## What is implemented
 
 - DOP853/Dormand-Prince 8(5,3) propagation through SciPy `solve_ivp`.
@@ -23,9 +30,9 @@ attribution notices are included in `eopy/assets/`.
 - Basic propagation events through SciPy-compatible callables.
 - On-demand data download and parsing helpers for external gravity, EOP and space-weather inputs.
 - A C++ library for the most used functions loaded with `ctypes`, intended for the computationally
-  heavy gravity paths.
+  heavy gravity parts.
 
-Large operational data files are not bundled with the package. Use `EOPY_DATA_PATH` to choose a
+Large data files are not bundled with the package. Use `EOPY_DATA_PATH` to choose a
 cache directory, or let eopy use the platform cache directory. The `eopy.data` module can download
 CelesTrak space-weather/EOP CSVs and arbitrary ICGEM-compatible gravity model files, and can parse
 `.gfc` gravity coefficients into contiguous NumPy arrays.
@@ -47,9 +54,9 @@ The native API is loaded through `ctypes`.
 ## Precision propagation
 
 High-degree gravity models are defined in ITRS, while propagated Cartesian
-states are normally GCRS.  Build an Earth-orientation provider and pass it with
+states are normally GCRS. Build an Earth-orientation provider and pass it with
 the gravity field so tesseral harmonics and atmospheric drag are evaluated in
-the correct rotating frame.  Time-variable ICGEM 2.0 models also require an
+the correct rotating frame. Time-variable ICGEM 2.0 models also require an
 evaluation epoch:
 
 ```python
@@ -104,8 +111,8 @@ t, propagated, stats = propagate(
 )
 ```
 
-More runnable examples live in `examples/` and are covered by pytest so they
-stay synchronized with the public API.
+More runnable examples are in `examples/` and are covered by pytest so they
+stay working across updates.
 
 To print a slowest-first breakdown of propagation and force-model costs:
 
@@ -129,3 +136,40 @@ python examples/native_gravity_model.py \
 
 Both examples default to the ICGEM EIGEN-6S4 v2 `.gfc` URL when no gravity URL
 or local gravity model path is supplied.
+
+## Installation and development
+
+Use Python 3.11 or newer. Linux x86_64 is the initial binary distribution target.
+
+```bash
+python -m pip install eopy
+# From a checkout, with a C++17 compiler and CMake available:
+pip install '.[develop]'
+pytest --ignore=tests/precision_orbit
+```
+
+`propagate` accepts a single `(6,)` state or an `(N, 6)` batch, in metres and
+metres/second. Times are seconds relative to the epoch supplied to frame,
+ephemeris, and atmosphere providers. Use timezone-aware UTC epochs. Force
+providers must share those axes and epoch. History is `(T, 6)` or `(T, N, 6)`;
+without history, the final state has the input shape. Built-in events apply to
+one spacecraft; custom events receive the batch and return a scalar.
+
+`sample_times` requests output along the integration direction, including for
+backward propagation. A terminal event can leave an empty requested history;
+its state and time remain in the statistics. Zero-duration integration returns
+the initial state without evaluating forces or events. For sampled integrations,
+accepted/rejected internal step counts are unavailable; use `function_evals`.
+
+Use `backend="native"` for high-degree gravity to require compiled kernels;
+`"auto"` falls back to Python and `"python"` explicitly selects it. The Python
+harmonic implementation is intended for low-degree validation. Native load errors
+include build and search diagnostics. Interpolated providers reject requests
+outside their coverage. Atmosphere altitude clipping, default activity, and the
+exponential approximation should be considered when interpreting results.
+
+Run `python examples/atmosphere_models.py` for MSIS/DTM2000 density and relativity
+examples. See [scientific validation and limitations](docs/validation.md),
+[release checks](docs/releasing.md), and [migration notes](CHANGELOG.md).
+The [public interface reference](docs/api.md) describes force inputs, callbacks,
+configuration, and return values.
