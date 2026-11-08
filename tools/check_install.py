@@ -9,7 +9,7 @@ import eopy
 from eopy import native
 
 assert native.available(), native.library_diagnostics()
-assert version("eopy") == eopy.__version__, "Package metadata and Python versions differ"
+assert version("eopy-orbits") == eopy.__version__, "Package metadata and Python versions differ"
 assert native.version() == eopy.__version__, "Native library is stale; rebuild or reinstall eopy"
 assert files("eopy").joinpath("assets/dtm_2000.txt").is_file()
 assert files("eopy").joinpath("assets/Orekit-NOTICE.txt").is_file()
@@ -24,4 +24,4 @@ _, final, _ = eopy.propagate(
     options=eopy.Dop853Options(rtol=1e-12, atol=1e-7, max_step=45),
 )
 np.testing.assert_allclose(final[:3], initial[:3], atol=0.003)
-print(f"eopy {eopy.__version__}: installed native propagation verified")
+print(f"eopy-orbits {eopy.__version__}: installed native propagation verified")

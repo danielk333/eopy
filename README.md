@@ -136,9 +136,10 @@ or local gravity model path is supplied.
 ## Installation and development
 
 Use Python 3.11 or newer. Linux x86_64 is the initial binary distribution target.
+Install the `eopy-orbits` distribution and use `import eopy` in Python.
 
 ```bash
-python -m pip install eopy
+python -m pip install eopy-orbits
 # From a checkout, with a C++17 compiler and CMake available:
 pip install '.[develop]'
 pytest --ignore=tests/precision_orbit

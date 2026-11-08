@@ -3,7 +3,7 @@ requires = ["scikit-build-core>=0.12"]
 build-backend = "scikit_build_core.build"
 
 [project]
-name = "eopy"
+name = "eopy-orbits"
 dynamic = ["version"]
 description = "Fast Python Earth orbit propagation kernels with NumPy/SciPy"
 readme = "README.md"
@@ -24,7 +24,7 @@ Issues = "https://gitlab.irf.se/danielk/eopy/-/issues"
 
 [project.optional-dependencies]
 tests = ["pytest>=8", "matplotlib>=3.8", "sgp4>=2.23"]
-develop = ["eopy[tests]", "ruff>=0.9", "mypy>=1.15", "build>=1.2", "twine>=6"]
+develop = ["eopy-orbits[tests]", "ruff>=0.9", "mypy>=1.15", "build>=1.2", "twine>=6"]
 examples = ["matplotlib>=3.8", "sgp4>=2.23"]
 
 [tool.scikit-build]
