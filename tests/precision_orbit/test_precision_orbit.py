@@ -5,6 +5,15 @@ state is then an independent reference point for the same propagated orbit.
 An EOF file can be supplied with ``--precision-orbit-file`` (or
 ``EOPY_PRECISION_ORBIT_FILE``); otherwise it is cached below ``EOPY_DATA_PATH``
 when Copernicus Data Space credentials are available.
+
+Example running:
+
+```
+    pytest tests/precision_orbit/test_precision_orbit.py --plot \
+            --precision-orbit-file ~/data/eopy/sentinel_2b_20240704.eof \
+            --gravity-model-file ~/data/eopy/EIGEN-6S4\%20\(v2\).gfc \
+            --space-weather-file ~/data/eopy/SW-All.csv
+```
 """
 
 from __future__ import annotations
@@ -26,11 +35,10 @@ from eopy.data import read_icgem_gfc
 from eopy.frames import interpolated_earth_orientation
 from eopy.gravity import GravityField
 from eopy.integrators import Dop853Options
-from eopy.propagator import SpacecraftProperties, propagate
 from eopy.profiling import PropagationProfile
+from eopy.propagator import SpacecraftProperties, propagate
 from eopy.radiation import RadiationPressure
 from eopy.third_body import ThirdBody, interpolated_astropy_body_providers
-
 
 UTC = dt.timezone.utc
 START = dt.datetime(2024, 7, 4, 10, 15, tzinfo=UTC)
@@ -65,7 +73,9 @@ def _product_interval(product):
     interval = []
     for key in ("Start", "End"):
         instant = dt.datetime.fromisoformat(content[key].replace("Z", "+00:00"))
-        interval.append(instant.replace(tzinfo=UTC) if instant.tzinfo is None else instant.astimezone(UTC))
+        interval.append(
+            instant.replace(tzinfo=UTC) if instant.tzinfo is None else instant.astimezone(UTC)
+        )
     return tuple(interval)
 
 
@@ -80,7 +90,8 @@ def _products_covering_interval(products, start: dt.datetime, end: dt.datetime):
     cursor = start
     while cursor < end:
         usable = [
-            product for product in candidates
+            product
+            for product in candidates
             if _product_interval(product)[0] <= cursor < _product_interval(product)[1]
         ]
         if not usable:
@@ -129,8 +140,11 @@ def _download_precision_orbit(path: Path, username: str, password: str) -> Path:
         f"ContentDate/Start lt {query_end} and "
         "Attributes/OData.CSC.StringAttribute/any(a:a/Name eq 'productType' and a/Value eq 'AUX_POEORB')"
     )
-    catalogue_url = "https://catalogue.dataspace.copernicus.eu/odata/v1/Products?" + urllib.parse.urlencode(
-        {"$filter": predicate, "$orderby": "ContentDate/Start", "$top": "20"}
+    catalogue_url = (
+        "https://catalogue.dataspace.copernicus.eu/odata/v1/Products?"
+        + urllib.parse.urlencode(
+            {"$filter": predicate, "$orderby": "ContentDate/Start", "$top": "20"}
+        )
     )
     products = _request_json(catalogue_url)["value"]
     if not products:
@@ -152,7 +166,9 @@ def _download_precision_orbit(path: Path, username: str, password: str) -> Path:
     )["access_token"]
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    downloads = [path.with_suffix(path.suffix + f".part.{index}") for index in range(len(covering_products))]
+    downloads = [
+        path.with_suffix(path.suffix + f".part.{index}") for index in range(len(covering_products))
+    ]
     merged = path.with_suffix(path.suffix + ".part")
     try:
         for product, temporary in zip(covering_products, downloads):
@@ -160,7 +176,10 @@ def _download_precision_orbit(path: Path, username: str, password: str) -> Path:
                 f"https://download.dataspace.copernicus.eu/odata/v1/Products({product['Id']})/$value",
                 headers={"Authorization": f"Bearer {token}"},
             )
-            with urllib.request.urlopen(request, timeout=120.0) as response, temporary.open("wb") as output:
+            with (
+                urllib.request.urlopen(request, timeout=120.0) as response,
+                temporary.open("wb") as output,
+            ):
                 while block := response.read(1024 * 1024):
                     output.write(block)
         _merge_precision_orbit_files(downloads, merged)
@@ -177,7 +196,9 @@ def _parse_earth_fixed_states(path: Path, start: dt.datetime, end: dt.datetime):
     epochs = []
     states = []
     for osv in root.findall(".//Data_Block//OSV"):
-        epoch = dt.datetime.fromisoformat(osv.findtext("UTC").removeprefix("UTC=").replace("Z", "+00:00"))
+        epoch = dt.datetime.fromisoformat(
+            osv.findtext("UTC").removeprefix("UTC=").replace("Z", "+00:00")
+        )
         # Sentinel EOF timestamps are UTC, but products commonly omit the
         # trailing ``Z`` and therefore parse as offset-naive datetimes.
         if epoch.tzinfo is None:
@@ -238,8 +259,12 @@ def test_merge_precision_orbit_files_sorts_and_deduplicates_osvs(tmp_path):
     first = tmp_path / "first.eof"
     second = tmp_path / "second.eof"
     merged = tmp_path / "merged.eof"
-    first.write_text(template.format(osv("2024-07-04T10:15:10Z", 2) + osv("2024-07-04T10:15:20Z", 3)))
-    second.write_text(template.format(osv("2024-07-04T10:15:00Z", 1) + osv("2024-07-04T10:15:10Z", 2)))
+    first.write_text(
+        template.format(osv("2024-07-04T10:15:10Z", 2) + osv("2024-07-04T10:15:20Z", 3))
+    )
+    second.write_text(
+        template.format(osv("2024-07-04T10:15:00Z", 1) + osv("2024-07-04T10:15:10Z", 2))
+    )
 
     _merge_precision_orbit_files([first, second], merged)
     epochs, states = _parse_earth_fixed_states(

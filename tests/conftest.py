@@ -7,6 +7,16 @@ from eopy.data import DEFAULT_GRAVITY_MODEL_FILENAME, resolve_data_path
 
 
 def pytest_addoption(parser):
+    parser.addoption(
+        "--require-precision",
+        action="store_true",
+        help="Fail rather than skip missing precision validation inputs.",
+    )
+    parser.addoption(
+        "--python-backend",
+        action="store_true",
+        help="Disable native loading to test Python fallbacks.",
+    )
     parser.addoption("--plot", action="store_true", help="Show plots produced by validation tests.")
     parser.addoption(
         "--precision-orbit-file",
@@ -33,15 +43,15 @@ def plot(request):
 def precision_orbit_paths(request):
     cache_option = request.config.getoption("--precision-orbit-cache")
     cache_dir = (
-        cache_option
-        if cache_option is not None
-        else resolve_data_path() / "precision_orbit"
+        cache_option if cache_option is not None else resolve_data_path() / "precision_orbit"
     )
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     file_option = request.config.getoption("--precision-orbit-file")
     env_file = os.environ.get("EOPY_PRECISION_ORBIT_FILE")
-    orbit_file = file_option or (Path(env_file) if env_file else cache_dir / "sentinel_2b_20240704.eof")
+    orbit_file = file_option or (
+        Path(env_file) if env_file else cache_dir / "sentinel_2b_20240704.eof"
+    )
     return cache_dir, orbit_file
 
 
@@ -82,3 +92,26 @@ def precision_environment_paths(request):
         ]
     )
     return gravity, weather
+
+
+def pytest_configure(config):
+    if config.getoption("--python-backend"):
+        from eopy import native
+
+        def unavailable():
+            raise native.NativeUnavailableError("Native backend disabled for fallback tests")
+
+        native._load = unavailable
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    report = outcome.get_result()
+    if (
+        item.config.getoption("--require-precision")
+        and report.skipped
+        and "precision_orbit" in str(item.fspath)
+    ):
+        report.outcome = "failed"
+        report.longrepr = f"Required precision validation skipped: {report.longrepr}"
