@@ -113,7 +113,7 @@ bool harmonic_acceleration(const double* r, size_t degree, size_t order,
 extern "C" {
 
 const char* eopy_native_version(void) {
-    return "1.0.0rc1";
+    return EOPY_VERSION;
 }
 
 int eopy_central_j2_accel_batch(

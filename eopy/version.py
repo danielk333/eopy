@@ -1,6 +1,6 @@
-import importlib.metadata
+"""Single version source for Python, package metadata, and native builds.
 
-try:
-    __version__ = importlib.metadata.version("metablate")
-except importlib.metadata.PackageNotFoundError:
-    __version__ = "0.0+local"
+Update this value for releases, then rebuild the native library.
+"""
+
+__version__ = "1.0.0rc1"

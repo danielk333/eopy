@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "eopy"
-version = "1.0.0rc1"
+dynamic = ["version"]
 description = "Fast Python Earth orbit propagation kernels with NumPy/SciPy"
 readme = "README.md"
 license = "GPL-3.0-only"
@@ -30,6 +30,10 @@ examples = ["matplotlib>=3.8", "sgp4>=2.23"]
 [tool.scikit-build]
 wheel.packages = ["eopy"]
 cmake.version = ">=3.18"
+
+[tool.scikit-build.metadata.version]
+provider = "scikit_build_core.metadata.regex"
+input = "eopy/version.py"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
