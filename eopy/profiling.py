@@ -48,7 +48,9 @@ class PropagationProfile:
         total_seconds = total.seconds if total is not None else 0.0
         header = f"{'effect':<26} {'calls':>10} {'total [s]':>12} {'per call [us]':>15} {'propagation %':>14}"
         rows = [header, "-" * len(header)]
-        for name, timing in sorted(self.timings.items(), key=lambda item: item[1].seconds, reverse=True):
+        for name, timing in sorted(
+            self.timings.items(), key=lambda item: item[1].seconds, reverse=True
+        ):
             percent = 100.0 * timing.seconds / total_seconds if total_seconds else 0.0
             rows.append(
                 f"{name:<26} {timing.calls:>10d} {timing.seconds:>12.6f} "
