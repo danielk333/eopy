@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-import math
 from dataclasses import dataclass
+from datetime import datetime
+from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy.interpolate import CubicSpline
 
+from .types import NDArray_NxM
+
+if TYPE_CHECKING:
+    from astropy.time import Time
 
 _WGS84_A = 6_378_137.0
 _WGS84_F = 1.0 / 298.257_223_563
@@ -23,28 +27,31 @@ class EarthOrientation:
 
     _rotation: CubicSpline
 
-    def rotation(self, time_s: float) -> np.ndarray:
-        return np.asarray(self._rotation(float(time_s)), dtype=float)
+    def rotation(self, time_s: float) -> NDArray_NxM:
+        value = np.asarray(self._rotation(float(time_s)), dtype=float)
+        if not np.all(np.isfinite(value)):
+            raise ValueError("time is outside Earth-orientation coverage")
+        return value
 
-    def rotation_rate(self, time_s: float) -> np.ndarray:
+    def rotation_rate(self, time_s: float) -> NDArray_NxM:
         return np.asarray(self._rotation(float(time_s), 1), dtype=float)
 
-    def position_to_fixed(self, time_s: float, position_m: np.ndarray) -> np.ndarray:
+    def position_to_fixed(self, time_s: float, position_m: NDArray_NxM) -> NDArray_NxM:
         return np.asarray(position_m) @ self.rotation(time_s).T
 
     def state_to_fixed(
         self,
         time_s: float,
-        position_m: np.ndarray,
-        velocity_mps: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
+        position_m: NDArray_NxM,
+        velocity_mps: NDArray_NxM,
+    ) -> tuple[NDArray_NxM, NDArray_NxM]:
         rotation = self.rotation(time_s)
         rotation_rate = self.rotation_rate(time_s)
         position = np.asarray(position_m)
         velocity = np.asarray(velocity_mps)
         return position @ rotation.T, velocity @ rotation.T + position @ rotation_rate.T
 
-    def vector_to_inertial(self, time_s: float, fixed_vector: np.ndarray) -> np.ndarray:
+    def vector_to_inertial(self, time_s: float, fixed_vector: NDArray_NxM) -> NDArray_NxM:
         return np.asarray(fixed_vector) @ self.rotation(time_s)
 
 
@@ -52,7 +59,6 @@ def interpolated_earth_orientation(
     epoch: datetime,
     t0: float,
     t1: float,
-    *,
     spacing_s: float = 60.0,
 ) -> EarthOrientation:
     """Build an Astropy/spacecoords-backed GCRS-to-ITRS rotation provider."""
@@ -76,32 +82,36 @@ def interpolated_earth_orientation(
     return EarthOrientation(CubicSpline(sample_times, rotations, axis=0, extrapolate=False))
 
 
-def _ecef_scalar_to_geodetic_wgs84(position_m: np.ndarray, degrees: bool) -> tuple[float, float, float]:
-    """Fast scalar ECEF-to-geodetic conversion for propagator hot paths."""
+def _ecef_scalar_to_geodetic_wgs84(
+    position_m: NDArray_NxM, degrees: bool
+) -> tuple[float, float, float]:
+    """Scalar ECEF-to-geodetic conversion for propagator hot paths."""
 
     x, y, z = (float(value) for value in position_m)
-    horizontal = math.hypot(x, y)
+    horizontal = np.hypot(x, y)
     if horizontal <= _WGS84_POLE_LIMIT_M:
-        latitude = math.copysign(math.pi / 2.0, z) if z != 0.0 else 0.0
+        latitude = np.copysign(np.pi / 2.0, z) if z != 0.0 else 0.0
         longitude = 0.0
         altitude = abs(z) - _WGS84_B
     else:
-        longitude = math.atan2(y, x)
-        latitude = math.atan2(z, horizontal * (1.0 - _WGS84_E2))
+        longitude = np.arctan2(y, x)
+        latitude = np.arctan2(z, horizontal * (1.0 - _WGS84_E2))
         for _ in range(3):
-            sin_latitude = math.sin(latitude)
-            prime_vertical = _WGS84_A / math.sqrt(1.0 - _WGS84_E2 * sin_latitude * sin_latitude)
-            latitude = math.atan2(z + _WGS84_E2 * prime_vertical * sin_latitude, horizontal)
-        sin_latitude = math.sin(latitude)
-        prime_vertical = _WGS84_A / math.sqrt(1.0 - _WGS84_E2 * sin_latitude * sin_latitude)
-        altitude = horizontal / math.cos(latitude) - prime_vertical
+            sin_latitude = np.sin(latitude)
+            prime_vertical = _WGS84_A / np.sqrt(1.0 - _WGS84_E2 * sin_latitude * sin_latitude)
+            latitude = np.arctan2(z + _WGS84_E2 * prime_vertical * sin_latitude, horizontal)
+        sin_latitude = np.sin(latitude)
+        prime_vertical = _WGS84_A / np.sqrt(1.0 - _WGS84_E2 * sin_latitude * sin_latitude)
+        altitude = horizontal / np.cos(latitude) - prime_vertical
     if degrees:
-        latitude = math.degrees(latitude)
-        longitude = math.degrees(longitude)
-    return latitude, longitude, altitude
+        latitude = np.degrees(latitude)
+        longitude = np.degrees(longitude)
+    return float(latitude), float(longitude), float(altitude)
 
 
-def ecef_to_geodetic_wgs84(position_m: np.ndarray, *, degrees: bool = True) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def ecef_to_geodetic_wgs84(
+    position_m: NDArray_NxM, *, degrees: bool = True
+) -> tuple[NDArray_NxM | float, NDArray_NxM | float, NDArray_NxM | float]:
     """Convert ECEF Cartesian positions to WGS84 latitude, longitude and altitude."""
 
     r = np.asarray(position_m, dtype=float)
@@ -138,7 +148,7 @@ def ecef_to_geodetic_wgs84(position_m: np.ndarray, *, degrees: bool = True) -> t
     return latitude, longitude, altitude
 
 
-def astropy_time(epoch: datetime, offset_seconds: float = 0.0):
+def astropy_time(epoch: datetime, offset_seconds: float = 0.0) -> Time:
     """Return an Astropy ``Time`` for an epoch plus propagation seconds."""
 
     try:

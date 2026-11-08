@@ -13,14 +13,15 @@ from dataclasses import dataclass
 import numpy as np
 
 from .constants import ASTRONOMICAL_UNIT, EARTH_RADIUS, SOLAR_RADIATION_PRESSURE_1AU
+from .types import NDArray_NxM
 
 
 @dataclass(slots=True)
 class RadiationPressure:
-    area_m2: float | np.ndarray = 0.0
-    reflection_coefficient: float | np.ndarray = 1.0
-    mass_kg: float | np.ndarray = 1.0
-    global_factor: float | np.ndarray = 1.0
+    area_m2: float | NDArray_NxM = 0.0
+    reflection_coefficient: float | NDArray_NxM = 1.0
+    mass_kg: float | NDArray_NxM = 1.0
+    global_factor: float | NDArray_NxM = 1.0
     solar_pressure_1au: float = SOLAR_RADIATION_PRESSURE_1AU
     earth_radius_m: float = EARTH_RADIUS
     cylindrical_shadow: bool = True
@@ -30,7 +31,9 @@ class RadiationPressure:
 SUN_RADIUS_M = 695_700_000.0
 
 
-def cylindrical_shadow_factor(position_m: np.ndarray, sun_position_m: np.ndarray, earth_radius_m: float = EARTH_RADIUS) -> np.ndarray:
+def cylindrical_shadow_factor(
+    position_m: NDArray_NxM, sun_position_m: NDArray_NxM, earth_radius_m: float = EARTH_RADIUS
+) -> NDArray_NxM:
     """Return 0 in Earth cylindrical umbra, 1 otherwise."""
 
     r = np.asarray(position_m, dtype=float)
@@ -49,11 +52,11 @@ def cylindrical_shadow_factor(position_m: np.ndarray, sun_position_m: np.ndarray
 
 
 def conical_shadow_factor(
-    position_m: np.ndarray,
-    sun_position_m: np.ndarray,
+    position_m: NDArray_NxM,
+    sun_position_m: NDArray_NxM,
     earth_radius_m: float = EARTH_RADIUS,
     sun_radius_m: float = SUN_RADIUS_M,
-) -> np.ndarray:
+) -> NDArray_NxM:
     """Return the visible fraction of the solar disc through umbra/penumbra."""
 
     r = np.asarray(position_m, dtype=float)
@@ -69,21 +72,25 @@ def conical_shadow_factor(
     earth_distance = np.linalg.norm(satellite_to_earth, axis=1)
     sun_angle = np.arcsin(np.clip(sun_radius_m / sun_distance, 0.0, 1.0))
     earth_angle = np.arcsin(np.clip(earth_radius_m / earth_distance, 0.0, 1.0))
-    cosine = np.sum(satellite_to_sun * satellite_to_earth, axis=1) / (
-        sun_distance * earth_distance
-    )
+    cosine = np.sum(satellite_to_sun * satellite_to_earth, axis=1) / (sun_distance * earth_distance)
     separation = np.arccos(np.clip(cosine, -1.0, 1.0))
     visible = np.ones(r.shape[0], dtype=float)
     total = separation >= earth_angle + sun_angle
     hidden = separation <= earth_angle - sun_angle
-    partial = ~(total | hidden)
+    annular = (sun_angle > earth_angle) & (separation <= sun_angle - earth_angle)
+    partial = ~(total | hidden | annular)
+    visible[annular] = 1.0 - (earth_angle[annular] / sun_angle[annular]) ** 2
     visible[hidden] = 0.0
     if np.any(partial):
         d = separation[partial]
         rs = sun_angle[partial]
         re = earth_angle[partial]
-        sun_sector = rs * rs * np.arccos(np.clip((d * d + rs * rs - re * re) / (2.0 * d * rs), -1.0, 1.0))
-        earth_sector = re * re * np.arccos(np.clip((d * d + re * re - rs * rs) / (2.0 * d * re), -1.0, 1.0))
+        sun_sector = (
+            rs * rs * np.arccos(np.clip((d * d + rs * rs - re * re) / (2.0 * d * rs), -1.0, 1.0))
+        )
+        earth_sector = (
+            re * re * np.arccos(np.clip((d * d + re * re - rs * rs) / (2.0 * d * re), -1.0, 1.0))
+        )
         lens = 0.5 * np.sqrt(
             np.maximum(0.0, (-d + rs + re) * (d + rs - re) * (d - rs + re) * (d + rs + re))
         )
@@ -92,10 +99,10 @@ def conical_shadow_factor(
 
 
 def solar_radiation_pressure_acceleration(
-    position_m: np.ndarray,
-    sun_position_m: np.ndarray,
+    position_m: NDArray_NxM,
+    sun_position_m: NDArray_NxM,
     radiation: RadiationPressure,
-) -> np.ndarray:
+) -> NDArray_NxM:
     """Isotropic SRP acceleration following Orekit's single-coefficient model."""
 
     r = np.asarray(position_m, dtype=float)

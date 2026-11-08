@@ -5,16 +5,16 @@ from __future__ import annotations
 import numpy as np
 
 from .constants import EARTH_MU
-
+from .types import NDArray_NxM
 
 SPEED_OF_LIGHT_MPS = 299_792_458.0
 
 
 def schwarzschild_acceleration(
-    position_m: np.ndarray,
-    velocity_mps: np.ndarray,
+    position_m: NDArray_NxM,
+    velocity_mps: NDArray_NxM,
     mu: float = EARTH_MU,
-) -> np.ndarray:
+) -> NDArray_NxM:
     """Return the first post-Newtonian Schwarzschild acceleration."""
 
     position = np.asarray(position_m, dtype=float)

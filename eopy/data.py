@@ -5,12 +5,14 @@ from __future__ import annotations
 import hashlib
 import os
 import tempfile
-from datetime import date, datetime, timedelta, timezone
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from urllib.request import urlopen
 
 import numpy as np
+
+from .types import NDArray_NxM
 
 DEFAULT_URLS = {
     "gravity_icgem_eigen_6s4_v2": "https://icgem.gfz.de/getmodel/gfc/4cc119d62d3f83adce857914bcabdfa7ca2f91677ed2905934cf52698584b4c9/EIGEN-6S4%20(v2).gfc",
@@ -40,8 +42,8 @@ class GravityModel:
     reference_radius: float
     max_degree: int
     max_order: int
-    c: np.ndarray
-    s: np.ndarray
+    c: NDArray_NxM
+    s: NDArray_NxM
     normalized: bool = True
 
 
@@ -69,7 +71,6 @@ def _sha256(path: Path) -> str:
 def download_file(
     url: str,
     filename: str | None = None,
-    *,
     target_dir: str | os.PathLike[str] | None = None,
     sha256: str | None = None,
     refresh: bool = False,
@@ -102,17 +103,27 @@ def download_file(
     return out
 
 
-def download_space_weather(*, target_dir: str | os.PathLike[str] | None = None, refresh: bool = False) -> Path:
-    return download_file(DEFAULT_URLS["space_weather_celestrak"], "SW-All.csv", target_dir=target_dir, refresh=refresh)
+def download_space_weather(
+    *, target_dir: str | os.PathLike[str] | None = None, refresh: bool = False
+) -> Path:
+    return download_file(
+        DEFAULT_URLS["space_weather_celestrak"],
+        "SW-All.csv",
+        target_dir=target_dir,
+        refresh=refresh,
+    )
 
 
-def download_eop(*, target_dir: str | os.PathLike[str] | None = None, refresh: bool = False) -> Path:
-    return download_file(DEFAULT_URLS["eop_celestrak"], "EOP-All.csv", target_dir=target_dir, refresh=refresh)
+def download_eop(
+    *, target_dir: str | os.PathLike[str] | None = None, refresh: bool = False
+) -> Path:
+    return download_file(
+        DEFAULT_URLS["eop_celestrak"], "EOP-All.csv", target_dir=target_dir, refresh=refresh
+    )
 
 
 def download_gravity_model(
     url: str | None = None,
-    *,
     filename: str | None = None,
     target_dir: str | os.PathLike[str] | None = None,
     sha256: str | None = None,
@@ -157,7 +168,6 @@ def _coefficient_epoch(value: datetime | date | str | object | None) -> datetime
 
 def read_icgem_gfc(
     path: str | os.PathLike[str],
-    *,
     max_degree: int | None = None,
     max_order: int | None = None,
     epoch: datetime | date | str | object | None = None,
@@ -171,7 +181,9 @@ def read_icgem_gfc(
 
     header: dict[str, str] = {}
     static_coeffs: list[tuple[int, int, float, float]] = []
-    temporal_records: list[tuple[str, int, int, float, float, datetime, datetime, float | None]] = []
+    temporal_records: list[
+        tuple[str, int, int, float, float, datetime, datetime, float | None]
+    ] = []
     in_header = True
     with Path(path).open("rt", encoding="utf-8") as handle:
         for raw in handle:
@@ -217,6 +229,7 @@ def read_icgem_gfc(
 
     coeffs = list(static_coeffs)
     if temporal_records:
+        assert evaluation_epoch is not None
         active: dict[tuple[int, int], list[tuple[str, float, float, datetime, float | None]]] = {}
         for kind, n, m, c_value, s_value, t0, t1, period in temporal_records:
             if t0 <= evaluation_epoch < t1:
@@ -225,14 +238,15 @@ def read_icgem_gfc(
         missing = sorted(temporal_keys - active.keys())
         if missing:
             first = missing[0]
-            raise ValueError(f"no temporal gravity coefficients active at {evaluation_epoch.isoformat()} for {first}")
+            raise ValueError(
+                f"no temporal gravity coefficients active at {evaluation_epoch.isoformat()} for {first}"
+            )
         seconds_per_year = 365.25 * 86400.0
         for (n, m), records in active.items():
             base = [record for record in records if record[0] == "gfct"]
             if len(base) != 1:
                 raise ValueError(f"expected one active gfct record for degree/order {(n, m)}")
             _, c_value, s_value, t0, _ = base[0]
-            years = (evaluation_epoch - t0).total_seconds() / seconds_per_year
             for kind, dc, ds, record_t0, period in records:
                 if kind == "gfct":
                     continue
@@ -240,6 +254,7 @@ def read_icgem_gfc(
                 if kind == "trnd":
                     factor = record_years
                 else:
+                    assert period is not None
                     phase = 2.0 * np.pi * record_years / period
                     factor = np.sin(phase) if kind == "asin" else np.cos(phase)
                 c_value += dc * factor
@@ -255,9 +270,15 @@ def read_icgem_gfc(
         s[n, m] = s_nm
 
     norm = header.get("norm", "fully_normalized").lower()
+    if norm not in {"fully_normalized", "normalized", "unnormalized"}:
+        raise ValueError(f"unsupported coefficient normalization {norm!r}")
     return GravityModel(
         name=header.get("modelname", Path(path).stem),
-        mu=float(header.get("earth_gravity_constant", header.get("gm", "398600441800000.0")).replace("D", "E")),
+        mu=float(
+            header.get("earth_gravity_constant", header.get("gm", "398600441800000.0")).replace(
+                "D", "E"
+            )
+        ),
         reference_radius=float(header.get("radius", "6378136.3").replace("D", "E")),
         max_degree=degree,
         max_order=order,

@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Sequence
+from typing import Callable, Sequence
 
 import numpy as np
 from scipy.integrate import solve_ivp
 
-Array = np.ndarray
+from .profiling import PropagationProfile
+from .types import NDArray_NxM
+
+Array = NDArray_NxM
 Rhs = Callable[[float, Array], Array]
 
 
@@ -22,14 +25,14 @@ class Dop853Options:
 
 @dataclass(slots=True)
 class Dop853Stats:
-    accepted_steps: int
-    rejected_steps: int
+    accepted_steps: int | None
+    rejected_steps: int | None
     function_evals: int
     status: int
     message: str
     event_times: tuple[Array, ...] | None = None
     event_states: tuple[Array, ...] | None = None
-    profile: Any | None = None
+    profile: PropagationProfile | None = None
 
 
 Event = Callable[[float, Array], float]
@@ -40,7 +43,6 @@ def integrate_dop853(
     t0: float,
     y0: Array,
     t1: float,
-    *,
     options: Dop853Options | None = None,
     return_history: bool = False,
     sample_times: Array | None = None,
@@ -69,9 +71,9 @@ def integrate_dop853(
                 return float(event(t, y_flat.reshape(shape)))
 
             if hasattr(event, "terminal"):
-                flat_event.terminal = event.terminal
+                setattr(flat_event, "terminal", event.terminal)
             if hasattr(event, "direction"):
-                flat_event.direction = event.direction
+                setattr(flat_event, "direction", event.direction)
             wrapped_events.append(flat_event)
 
     kwargs = {
@@ -88,15 +90,25 @@ def integrate_dop853(
         requested_times = np.asarray(sample_times, dtype=float)
         if requested_times.ndim != 1 or requested_times.size == 0:
             raise ValueError("sample_times must be a non-empty one-dimensional array")
-        if np.any(np.diff(requested_times) <= 0.0):
-            raise ValueError("sample_times must be strictly increasing")
+        direction = 1.0 if t1 >= t0 else -1.0
+        if np.any(direction * np.diff(requested_times) <= 0.0):
+            raise ValueError("sample_times must follow the integration direction")
         lower, upper = sorted((float(t0), float(t1)))
-        if requested_times[0] < lower or requested_times[-1] > upper:
+        if np.any((requested_times < lower) | (requested_times > upper)):
             raise ValueError("sample_times must lie within the integration interval")
         kwargs["t_eval"] = requested_times
 
     if wrapped_events is not None:
         kwargs["events"] = wrapped_events
+    if t0 == t1:
+        times = np.array([float(t0)]) if requested_times is None else requested_times
+        stats = Dop853Stats(0, None, 0, 0, "Zero-duration integration.")
+        if events is not None:
+            stats.event_times = tuple(np.empty(0) for _ in event_list)
+            stats.event_states = tuple(np.empty((0,) + shape) for _ in event_list)
+        if return_history or requested_times is not None:
+            return times, np.broadcast_to(y0_arr, (times.size,) + shape).copy(), stats
+        return float(t0), y0_arr, stats
     solution = solve_ivp(flat_fun, (float(t0), float(t1)), y0_arr.reshape(-1), **kwargs)
     if not solution.success:
         raise RuntimeError(solution.message)
@@ -108,8 +120,8 @@ def integrate_dop853(
         event_states = tuple(np.asarray(y).reshape((-1,) + shape) for y in solution.y_events)
 
     stats = Dop853Stats(
-        accepted_steps=max(0, solution.t.size - 1),
-        rejected_steps=0,
+        accepted_steps=None if requested_times is not None else max(0, solution.t.size - 1),
+        rejected_steps=None,
         function_evals=solution.nfev,
         status=solution.status,
         message=solution.message,
@@ -117,6 +129,11 @@ def integrate_dop853(
         event_states=event_states,
     )
     if return_history or requested_times is not None:
-        ys = np.moveaxis(solution.y, 1, 0).reshape((solution.t.size,) + shape)
-        return solution.t, ys, stats
+        times = np.asarray(solution.t)
+        ys = (
+            np.moveaxis(solution.y, 1, 0).reshape((times.size,) + shape)
+            if times.size
+            else np.empty((0,) + shape)
+        )
+        return times, ys, stats
     return float(solution.t[-1]), solution.y[:, -1].reshape(shape), stats

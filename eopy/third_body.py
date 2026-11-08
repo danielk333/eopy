@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable
+from typing import Callable, Sequence
 
 import numpy as np
 from scipy.interpolate import CubicSpline
 
 from .profiling import PropagationProfile
+from .types import NDArray_NxM
 
-PositionProvider = Callable[[float], np.ndarray]
+PositionProvider = Callable[[float], NDArray_NxM]
 
 
 @dataclass(slots=True)
@@ -19,14 +21,18 @@ class ThirdBody:
     """Point-mass third body with a fixed or time-varying geocentric position."""
 
     mu: float
-    position_m: np.ndarray | PositionProvider
+    position_m: NDArray_NxM | PositionProvider
     name: str = ""
 
-    def position(self, t: float) -> np.ndarray:
-        return self.position_m(t) if callable(self.position_m) else np.asarray(self.position_m, dtype=float)
+    def position(self, t: float) -> NDArray_NxM:
+        return (
+            self.position_m(t)
+            if callable(self.position_m)
+            else np.asarray(self.position_m, dtype=float)
+        )
 
 
-def _as_batch_position(position_m: np.ndarray) -> tuple[np.ndarray, bool]:
+def _as_batch_position(position_m: NDArray_NxM) -> tuple[NDArray_NxM, bool]:
     arr = np.asarray(position_m, dtype=float)
     single = arr.ndim == 1
     if single:
@@ -36,7 +42,9 @@ def _as_batch_position(position_m: np.ndarray) -> tuple[np.ndarray, bool]:
     return arr, single
 
 
-def third_body_acceleration(position_m: np.ndarray, t: float, bodies: ThirdBody | list[ThirdBody] | tuple[ThirdBody, ...]) -> np.ndarray:
+def third_body_acceleration(
+    position_m: NDArray_NxM, t: float, bodies: ThirdBody | Sequence[ThirdBody]
+) -> NDArray_NxM:
     """Return differential third-body acceleration in an Earth-centered frame."""
 
     r, single = _as_batch_position(position_m)
@@ -47,7 +55,9 @@ def third_body_acceleration(position_m: np.ndarray, t: float, bodies: ThirdBody 
         if rb.ndim == 1:
             rb = np.broadcast_to(rb, r.shape)
         if rb.shape != r.shape:
-            raise ValueError("third-body position must have shape (3,) or match position batch shape")
+            raise ValueError(
+                "third-body position must have shape (3,) or match position batch shape"
+            )
         sat_to_body = rb - r
         body_norm = np.linalg.norm(rb, axis=1)
         sat_norm = np.linalg.norm(sat_to_body, axis=1)
@@ -58,13 +68,15 @@ def third_body_acceleration(position_m: np.ndarray, t: float, bodies: ThirdBody 
 def astropy_geocentric_body_provider(body: str, epoch: datetime) -> PositionProvider:
     """Create a geocentric body-position provider backed by Astropy ephemerides."""
 
-    def provider(t: float) -> np.ndarray:
+    def provider(t: float) -> NDArray_NxM:
         try:
             from astropy import units as u
             from astropy.coordinates import get_body_barycentric_posvel
             from astropy.time import Time, TimeDelta
         except ModuleNotFoundError as exc:
-            raise ModuleNotFoundError("astropy is required for astropy-backed third-body positions") from exc
+            raise ModuleNotFoundError(
+                "astropy is required for astropy-backed third-body positions"
+            ) from exc
 
         instant = Time(epoch) + TimeDelta(float(t), format="sec")
         body_pos, _ = get_body_barycentric_posvel(body, instant)
@@ -79,7 +91,6 @@ def interpolated_astropy_body_providers(
     epoch: datetime,
     t0: float,
     t1: float,
-    *,
     spacing_s: float = 300.0,
     profile: PropagationProfile | None = None,
 ) -> dict[str, PositionProvider]:
@@ -103,7 +114,7 @@ def interpolated_astropy_body_providers(
     sample_times = np.append(sample_times, float(t1))
     epochs = Time(epoch) + TimeDelta(sample_times, format="sec")
 
-    setup_measure = profile.measure("ephemeris_setup") if profile is not None else _null_measure()
+    setup_measure = profile.measure("ephemeris_setup") if profile is not None else nullcontext()
     with setup_measure:
         earth_position, _ = get_body_barycentric_posvel("earth", epochs)
         splines = {}
@@ -112,19 +123,21 @@ def interpolated_astropy_body_providers(
             positions_m = (body_position.xyz - earth_position.xyz).to_value(u.m).T
             splines[body] = CubicSpline(sample_times, positions_m, axis=0, extrapolate=False)
 
-    def provider(spline):
+    def provider(spline: CubicSpline) -> PositionProvider:
         last_time = None
         last_position = None
 
-        def position(time_s: float) -> np.ndarray:
+        def position(time_s: float) -> NDArray_NxM:
             nonlocal last_time, last_position
-            if last_time == time_s:
+            if last_time == time_s and last_position is not None:
                 return last_position.copy()
             if profile is None:
                 value = np.asarray(spline(time_s))
             else:
                 with profile.measure("ephemeris_interpolation"):
                     value = np.asarray(spline(time_s))
+            if not np.all(np.isfinite(value)):
+                raise ValueError("time is outside ephemeris coverage")
             last_time = time_s
             last_position = value
             return value.copy()
@@ -132,11 +145,3 @@ def interpolated_astropy_body_providers(
         return position
 
     return {name: provider(spline) for name, spline in splines.items()}
-
-
-class _null_measure:
-    def __enter__(self):
-        return None
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        return False

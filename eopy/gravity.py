@@ -14,6 +14,7 @@ from scipy.special import gammaln, lpmv
 
 from .constants import EARTH_J2, EARTH_MU, EARTH_RADIUS
 from .data import GravityModel
+from .types import NDArray_NxM
 
 
 @dataclass(slots=True)
@@ -23,15 +24,21 @@ class GravityField:
     j2: float = EARTH_J2
     degree: int = 2
     order: int = 0
-    c: np.ndarray | None = None
-    s: np.ndarray | None = None
+    c: NDArray_NxM | None = None
+    s: NDArray_NxM | None = None
     normalized: bool = False
     use_finite_difference_harmonics: bool = False
     model: GravityModel | None = None
     backend: str = "auto"
 
     @classmethod
-    def from_model(cls, model: GravityModel, *, degree: int | None = None, order: int | None = None, backend: str = "auto") -> "GravityField":
+    def from_model(
+        cls,
+        model: GravityModel,
+        degree: int | None = None,
+        order: int | None = None,
+        backend: str = "auto",
+    ) -> "GravityField":
         return cls(
             mu=model.mu,
             reference_radius=model.reference_radius,
@@ -46,7 +53,7 @@ class GravityField:
         )
 
 
-def _as_batch_position(position_m: np.ndarray) -> tuple[np.ndarray, bool]:
+def _as_batch_position(position_m: NDArray_NxM) -> tuple[NDArray_NxM, bool]:
     arr = np.asarray(position_m, dtype=float)
     single = arr.ndim == 1
     if single:
@@ -56,7 +63,7 @@ def _as_batch_position(position_m: np.ndarray) -> tuple[np.ndarray, bool]:
     return arr, single
 
 
-def central_gravity(position_m: np.ndarray, mu: float = EARTH_MU) -> np.ndarray:
+def central_gravity(position_m: NDArray_NxM, mu: float = EARTH_MU) -> NDArray_NxM:
     r, single = _as_batch_position(position_m)
     r2 = np.sum(r * r, axis=1)
     inv_r3 = 1.0 / (r2 * np.sqrt(r2))
@@ -64,7 +71,12 @@ def central_gravity(position_m: np.ndarray, mu: float = EARTH_MU) -> np.ndarray:
     return out[0] if single else out
 
 
-def j2_acceleration(position_m: np.ndarray, mu: float = EARTH_MU, radius: float = EARTH_RADIUS, j2: float = EARTH_J2) -> np.ndarray:
+def j2_acceleration(
+    position_m: NDArray_NxM,
+    mu: float = EARTH_MU,
+    radius: float = EARTH_RADIUS,
+    j2: float = EARTH_J2,
+) -> NDArray_NxM:
     r, single = _as_batch_position(position_m)
     x = r[:, 0]
     y = r[:, 1]
@@ -79,7 +91,7 @@ def j2_acceleration(position_m: np.ndarray, mu: float = EARTH_MU, radius: float 
     return out[0] if single else out
 
 
-def _potential_unnormalized(position_m: np.ndarray, field: GravityField) -> np.ndarray:
+def _potential_unnormalized(position_m: NDArray_NxM, field: GravityField) -> NDArray_NxM:
     r, _ = _as_batch_position(position_m)
     x = r[:, 0]
     y = r[:, 1]
@@ -93,7 +105,7 @@ def _potential_unnormalized(position_m: np.ndarray, field: GravityField) -> np.n
         return u
     degree = min(field.degree, field.c.shape[0] - 1)
     order = min(field.order, degree)
-    series = np.ones_like(rho)
+    series = np.full_like(rho, field.c[0, 0])
     rr = field.reference_radius / rho
     rr_n = rr.copy()
     for n in range(1, degree + 1):
@@ -116,7 +128,7 @@ def _potential_unnormalized(position_m: np.ndarray, field: GravityField) -> np.n
     return field.mu / rho * series
 
 
-def _harmonic_accel_fd(position_m: np.ndarray, field: GravityField) -> np.ndarray:
+def _harmonic_accel_fd(position_m: NDArray_NxM, field: GravityField) -> NDArray_NxM:
     r, single = _as_batch_position(position_m)
     step = np.maximum(0.1, 1.0e-7 * np.linalg.norm(r, axis=1))
     grad = np.empty_like(r)
@@ -130,7 +142,7 @@ def _harmonic_accel_fd(position_m: np.ndarray, field: GravityField) -> np.ndarra
     return out[0] if single else out
 
 
-def gravity_acceleration(position_m: np.ndarray, field: GravityField | None = None) -> np.ndarray:
+def gravity_acceleration(position_m: NDArray_NxM, field: GravityField | None = None) -> NDArray_NxM:
     """Return gravity acceleration in the same axes as ``position_m``.
 
     ICGEM tesseral coefficients are Earth-fixed.  The propagator handles their
@@ -138,17 +150,19 @@ def gravity_acceleration(position_m: np.ndarray, field: GravityField | None = No
     """
 
     gf = GravityField() if field is None else field
+    if gf.backend not in {"auto", "native", "python"}:
+        raise ValueError(f"unknown gravity backend {gf.backend!r}")
     degree = min(gf.degree, gf.c.shape[0] - 1) if gf.c is not None else gf.degree
     order = min(gf.order, degree, gf.c.shape[1] - 1) if gf.c is not None else min(gf.order, degree)
-    if gf.c is not None and (gf.model is not None or gf.use_finite_difference_harmonics):
+    if gf.c is not None:
         if gf.backend in {"auto", "native"}:
             try:
                 from .native import (
                     NativeUnavailableError,
-                    holmes_featherstone_acceleration,
+                    spherical_harmonic_acceleration,
                 )
 
-                return holmes_featherstone_acceleration(
+                return spherical_harmonic_acceleration(
                     position_m,
                     degree=degree,
                     order=order,
@@ -167,13 +181,17 @@ def gravity_acceleration(position_m: np.ndarray, field: GravityField | None = No
         try:
             from .native import NativeUnavailableError, central_j2_acceleration
 
-            return central_j2_acceleration(position_m, gf.mu, gf.reference_radius, gf.j2)
+            return central_j2_acceleration(
+                position_m, gf.mu, gf.reference_radius, gf.j2 if gf.degree >= 2 else 0.0
+            )
         except NativeUnavailableError:
             if gf.backend == "native":
                 raise
     acc = central_gravity(position_m, gf.mu)
     if gf.j2 and gf.degree >= 2:
-        acc = acc + j2_acceleration(position_m, gf.mu, gf.reference_radius, gf.j2)
+        acc = acc + j2_acceleration(
+            position_m, gf.mu, gf.reference_radius, gf.j2 if gf.degree >= 2 else 0.0
+        )
     if gf.use_finite_difference_harmonics and gf.c is not None and gf.degree > 2:
         acc = _harmonic_accel_fd(position_m, gf)
     return acc
