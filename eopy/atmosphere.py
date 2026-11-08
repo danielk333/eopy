@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
-import math
-import csv
 from pathlib import Path
 from typing import Callable
 
@@ -17,16 +16,20 @@ from pymsis import msis as pymsis_api
 from .constants import EARTH_RADIUS
 from .dtm2000 import density_from_inputs as _dtm2000_density_from_inputs
 from .frames import ecef_to_geodetic_wgs84
-
+from .types import NDArray_NxM
 
 _MSIS_OPTIONS = pymsis_api.create_options()
+_MSIS_HISTORY_OPTIONS = pymsis_api.create_options(geomagnetic_activity=-1)
 
 
 @lru_cache(maxsize=32)
 def _msis_epoch_parts(epoch: datetime) -> tuple[float, float, datetime]:
     utc_epoch = epoch.astimezone(timezone.utc).replace(tzinfo=None)
     day = float(utc_epoch.timetuple().tm_yday)
-    seconds = float(utc_epoch.hour * 3600 + utc_epoch.minute * 60 + utc_epoch.second)
+    seconds = (
+        float(utc_epoch.hour * 3600 + utc_epoch.minute * 60 + utc_epoch.second)
+        + utc_epoch.microsecond / 1e6
+    )
     return day, seconds, utc_epoch
 
 
@@ -41,11 +44,11 @@ def _low_level_msis21_available() -> bool:
 def _calculate_msis21_density(
     day: float,
     seconds: float,
-    lons: np.ndarray,
-    lats: np.ndarray,
-    alts_km: np.ndarray,
+    lons: NDArray_NxM,
+    lats: NDArray_NxM,
+    alts_km: NDArray_NxM,
     activity: SolarActivity,
-) -> np.ndarray | None:
+) -> NDArray_NxM | None:
     """Call pymsis's compiled MSIS 2.1 extension when its interface is compatible."""
 
     if not _low_level_msis21_available():
@@ -65,12 +68,14 @@ def _calculate_msis21_density(
         aps = np.asfortranarray(np.broadcast_to(ap_values, (count, 7)))
     else:
         raise ValueError("ap must be a scalar or a seven-element MSIS history")
+    # pymsis.calculate documents scalar daily Ap versus seven-element storm history.
+    options = _MSIS_OPTIONS if ap_values.ndim == 0 else _MSIS_HISTORY_OPTIONS
     library = pymsis_api.msis21f
     try:
         with library._lock:
-            if library._last_used_options != _MSIS_OPTIONS:
-                library.pyinitswitch(_MSIS_OPTIONS, parmpath=pymsis_api._MSIS_PARAMETER_PATH)
-                library._last_used_options = _MSIS_OPTIONS
+            if library._last_used_options != options:
+                library.pyinitswitch(options, parmpath=pymsis_api._MSIS_PARAMETER_PATH)
+                library._last_used_options = options
             output = library.pymsiscalc(
                 days,
                 ut_seconds,
@@ -92,9 +97,14 @@ def _calculate_msis21_density(
 
 @dataclass(slots=True)
 class SolarActivity:
+    """Previous-day F10.7, centered 81-day mean, and daily Ap or 7-value history.
+
+    Input conventions: https://swxtrec.github.io/pymsis/reference/generated/pymsis.msis.calculate.html
+    """
+
     f10: float = 150.0
     f10_mean: float = 150.0
-    ap: float | np.ndarray = 4.0
+    ap: float | NDArray_NxM = 4.0
     kp_3h: float = 1.0
     kp_24h: float = 1.0
 
@@ -123,13 +133,15 @@ class CelestrakSpaceWeather:
         if row is None:
             raise ValueError(f"space weather is unavailable for {utc.date().isoformat()}")
         bin_index = utc.hour // 3
-        recent = []
+        recent: list[float] = []
         cursor = utc.date()
         cursor_bin = bin_index
         while len(recent) < 20:
             cursor_row = self._rows.get(cursor)
             if cursor_row is None:
-                raise ValueError(f"space weather history is unavailable before {utc.date().isoformat()}")
+                raise ValueError(
+                    f"space weather history is unavailable before {utc.date().isoformat()}"
+                )
             recent.append(float(cursor_row[f"AP{cursor_bin + 1}"]))
             cursor_bin -= 1
             if cursor_bin < 0:
@@ -146,24 +158,29 @@ class CelestrakSpaceWeather:
                 float(np.mean(recent[12:20])),
             ]
         )
-        kp_recent = []
+        kp_recent: list[float] = []
         if "KP1" in row:
             cursor = utc.date()
             cursor_bin = bin_index
             while len(kp_recent) < 8:
                 cursor_row = self._rows.get(cursor)
                 if cursor_row is None:
-                    raise ValueError(f"space weather history is unavailable before {utc.date().isoformat()}")
+                    raise ValueError(
+                        f"space weather history is unavailable before {utc.date().isoformat()}"
+                    )
                 value = cursor_row.get(f"KP{cursor_bin + 1}", "")
                 if not value:
-                    raise ValueError(f"Kp is unavailable for {cursor.isoformat()} bin {cursor_bin + 1}")
+                    raise ValueError(
+                        f"Kp is unavailable for {cursor.isoformat()} bin {cursor_bin + 1}"
+                    )
                 kp_recent.append(float(value) / 10.0)
                 cursor_bin -= 1
                 if cursor_bin < 0:
                     cursor -= timedelta(days=1)
                     cursor_bin = 7
         return SolarActivity(
-            f10=float(row["F10.7_OBS"]),
+            # MSIS and DTM2000 require the previous UTC day's observed flux.
+            f10=float(self._rows[utc.date() - timedelta(days=1)]["F10.7_OBS"]),
             f10_mean=float(row["F10.7_OBS_CENTER81"]),
             ap=ap,
             kp_3h=kp_recent[0] if kp_recent else 1.0,
@@ -191,7 +208,11 @@ def _activity_scale(activity: SolarActivity) -> float:
     return float(np.clip(f * g, 0.2, 8.0))
 
 
-def density_exponential(position_m: np.ndarray, activity: SolarActivity | None = None, config: AtmosphereConfig | None = None) -> np.ndarray | float:
+def density_exponential(
+    position_m: NDArray_NxM,
+    activity: SolarActivity | None = None,
+    config: AtmosphereConfig | None = None,
+) -> NDArray_NxM | float:
     """Return the configurable scale-height density used by early eopy releases."""
 
     act = SolarActivity() if activity is None else activity
@@ -212,13 +233,12 @@ def density_exponential(position_m: np.ndarray, activity: SolarActivity | None =
 
 
 def density_dtm2000(
-    position_m: np.ndarray,
+    position_m: NDArray_NxM,
     activity: SolarActivityProvider | None,
     config: AtmosphereConfig,
-    *,
     time_s: float,
-    sun_position_m: np.ndarray,
-) -> np.ndarray | float:
+    sun_position_m: NDArray_NxM,
+) -> NDArray_NxM | float:
     """Return DTM2000 density for Earth-fixed positions and Sun position.
 
     Positions and ``sun_position_m`` must use the same Earth-fixed axes. The
@@ -226,7 +246,11 @@ def density_dtm2000(
     """
 
     instant = config.epoch + timedelta(seconds=float(time_s))
-    act = SolarActivity() if activity is None else (activity(instant) if callable(activity) else activity)
+    act = (
+        SolarActivity()
+        if activity is None
+        else (activity(instant) if callable(activity) else activity)
+    )
     r = np.asarray(position_m, dtype=float)
     single = r.ndim == 1
     if single:
@@ -243,24 +267,33 @@ def density_dtm2000(
     y = sun[0] * r[:, 1] - sun[1] * r[:, 0]
     local_time = np.pi + np.arctan2(y, x)
     day = instant.astimezone(timezone.utc).timetuple().tm_yday
-    rho = np.asarray([
-        _dtm2000_density_from_inputs(
-            day, altitude, longitude, latitude, hour_angle,
-            act.f10, act.f10_mean, act.kp_3h, act.kp_24h,
-        )
-        for altitude, longitude, latitude, hour_angle
-        in zip(alts_m, lons, lats, local_time)
-    ])
+    rho = np.asarray(
+        [
+            _dtm2000_density_from_inputs(
+                day,
+                altitude,
+                longitude,
+                latitude,
+                hour_angle,
+                act.f10,
+                act.f10_mean,
+                act.kp_3h,
+                act.kp_24h,
+            )
+            for altitude, longitude, latitude, hour_angle in zip(
+                np.atleast_1d(alts_m), np.atleast_1d(lons), np.atleast_1d(lats), local_time
+            )
+        ]
+    )
     return rho[0] if single else rho
 
 
 def density_msis(
-    position_m: np.ndarray,
+    position_m: NDArray_NxM,
     activity: SolarActivityProvider | None = None,
     config: AtmosphereConfig | None = None,
-    *,
     time_s: float = 0.0,
-) -> np.ndarray | float:
+) -> NDArray_NxM | float:
     """Return MSIS mass density in kg/m^3 using ``pymsis``.
 
     Positions are interpreted as Earth-fixed coordinates and converted to WGS84
@@ -269,27 +302,28 @@ def density_msis(
 
     cfg = AtmosphereConfig(model="msis") if config is None else config
     instant = cfg.epoch + timedelta(seconds=float(time_s))
-    act = SolarActivity() if activity is None else (activity(instant) if callable(activity) else activity)
+    act = (
+        SolarActivity()
+        if activity is None
+        else (activity(instant) if callable(activity) else activity)
+    )
     r = np.asarray(position_m, dtype=float)
     single = r.ndim == 1
     if (single and r.shape != (3,)) or (not single and (r.ndim != 2 or r.shape[1] != 3)):
         raise ValueError("position array must have shape (3,) or (N, 3)")
-    if single:
-        finite_position = all(math.isfinite(float(value)) for value in r)
-    else:
-        finite_position = bool(np.all(np.isfinite(r)))
-    if not finite_position:
+    if not np.all(np.isfinite(r)):
         raise ValueError("MSIS inputs must contain only finite values")
     lats, lons, alts_m = ecef_to_geodetic_wgs84(r, degrees=True)
     if single:
-        altitude_km = min(max(alts_m, cfg.min_altitude_m), cfg.max_altitude_m) / 1000.0
+        altitude_km = min(max(float(alts_m), cfg.min_altitude_m), cfg.max_altitude_m) / 1000.0
         lats = np.asarray([lats])
         lons = np.asarray([lons])
         alts_km = np.asarray([altitude_km])
     else:
         alts_km = np.clip(alts_m, cfg.min_altitude_m, cfg.max_altitude_m) / 1000.0
-    if not math.isfinite(act.f10) or not math.isfinite(act.f10_mean) or not np.all(np.isfinite(act.ap)):
+    if not np.isfinite(act.f10) or not np.isfinite(act.f10_mean) or not np.all(np.isfinite(act.ap)):
         raise ValueError("MSIS inputs must contain only finite values")
+    lons, lats = np.asarray(lons), np.asarray(lats)
     day, seconds, epoch = _msis_epoch_parts(instant)
     rho = _calculate_msis21_density(day, seconds, lons, lats, alts_km, act)
     if rho is None:
@@ -312,6 +346,7 @@ def density_msis(
             f107as=f107a,
             aps=aps,
             version=2.1,
+            geomagnetic_activity=1 if ap_values.ndim == 0 else -1,
         )
         rho = np.asarray(out[..., pymsis.Variable.MASS_DENSITY], dtype=float).reshape(-1)
     return rho[0] if single else rho
