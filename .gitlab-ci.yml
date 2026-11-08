@@ -1,0 +1,102 @@
+image: python:3.14
+
+stages:
+  - test
+  - type_checking
+  - release
+
+.devsetup:
+  before_script:
+    - apt-get update && apt-get install -y g++ cmake
+    - python -m pip install '.[develop]'
+    - cmake -S . -B build/native -DCMAKE_BUILD_TYPE=Release
+    - cmake --build build/native --config Release
+
+pytest:
+  extends: .devsetup
+  stage: test
+  parallel:
+    matrix:
+      - PYTHON: ['3.11', '3.12', '3.13', '3.14']
+  image: python:$PYTHON
+  script:
+    - python -c 'from eopy import native; assert native.available()'
+    - python -m pytest --ignore=tests/precision_orbit
+    - python -m pytest --ignore=tests/precision_orbit --python-backend
+  only:
+    - merge_requests
+    - main
+    - develop
+    - tags
+
+quality:
+  extends: .devsetup
+  stage: type_checking
+  script:
+    - ruff check eopy tests examples tools
+    - ruff format --check eopy tests examples tools
+    - mypy eopy
+  only:
+    - merge_requests
+    - main
+    - develop
+    - tags
+
+sdist:
+  extends: .devsetup
+  stage: release
+  script:
+    - python -m build --sdist
+    - python -m pip wheel --no-deps dist/*.tar.gz -w rebuilt
+    - python -m twine check dist/*
+  artifacts:
+    paths: [dist/]
+  only:
+    - tags
+
+wheels:
+  stage: release
+  image: quay.io/pypa/manylinux_2_28_x86_64
+  parallel:
+    # Because we have compiled components, we run in matrix
+    matrix:
+      - CPYTHON: ['311', '312', '313', '314']
+  script:
+    - export PATH="/opt/python/cp${CPYTHON}-cp${CPYTHON}/bin:$PATH"
+    - python -m pip install build twine
+    - python -m build --wheel
+    - auditwheel repair dist/*.whl -w wheelhouse
+    - python -m twine check wheelhouse/*
+    - python -m pip install wheelhouse/*.whl
+    - cp tools/check_install.py /tmp/eopy_check_install.py
+    - cd /tmp && python eopy_check_install.py
+  artifacts:
+    paths: [wheelhouse/]
+  only:
+    - tags
+
+precision:
+  extends: .devsetup
+  stage: test
+  variables:
+    EOPY_DATA_PATH: /tmp/eopy-data
+  script:
+    # remember to set EOPY_DATA in GitLab CI variables (a url poiting to a .tar.gz archive).
+    - apt-get install -y curl
+    - curl --fail --location --silent --show-error "${EOPY_DATA:?Set EOPY_DATA in GitLab CI variables}" --output /tmp/eopy-reference.tar.gz
+    - mkdir -p "$EOPY_DATA_PATH"
+    - tar -xzf /tmp/eopy-reference.tar.gz --strip-components=1 -C "$EOPY_DATA_PATH"
+    - sha256sum "$EOPY_DATA_PATH"/*
+    - python -m pytest tests/precision_orbit --require-precision -s --precision-orbit-file "$EOPY_DATA_PATH/sentinel_2b_20240704.eof" --gravity-model-file "$EOPY_DATA_PATH/EIGEN-6S4_v2.gfc" --space-weather-file "$EOPY_DATA_PATH/SW-All.csv"
+  only:
+    - tags
+
+pypi:
+  stage: release
+  needs: [pytest, quality, sdist, wheels, precision]
+  script:
+    - python -m pip install twine
+    - python -m twine check dist/* wheelhouse/*
+    - TWINE_USERNAME=__token__ TWINE_PASSWORD="$PYPI_TOKEN" python -m twine upload dist/* wheelhouse/*
+  only:
+    - tags
