@@ -1,16 +1,13 @@
 import numpy as np
-import pymsis
 from scipy.interpolate import CubicSpline
-from spacecoords import frames
 
 from eopy.atmosphere import AtmosphereConfig, SolarActivity
-import eopy.atmosphere as atmosphere_module
-from eopy.constants import ASTRONOMICAL_UNIT, EARTH_MU, SOLAR_RADIATION_PRESSURE_1AU
+from eopy.constants import ASTRONOMICAL_UNIT, EARTH_MU
+from eopy.frames import EarthOrientation
 from eopy.gravity import GravityField, gravity_acceleration
 from eopy.integrators import Dop853Options
-from eopy.frames import EarthOrientation
-from eopy.propagator import SpacecraftProperties, drag_acceleration, propagate
 from eopy.profiling import PropagationProfile
+from eopy.propagator import SpacecraftProperties, propagate
 from eopy.radiation import (
     RadiationPressure,
     conical_shadow_factor,
@@ -122,12 +119,8 @@ def test_solar_radiation_pressure_cylindrical_umbra():
     assert cylindrical_shadow_factor(lit, sun)[0] == 1.0
     assert cylindrical_shadow_factor(eclipsed, sun)[0] == 0.0
 
-    radiation = RadiationPressure(
-        area_m2=2.5, reflection_coefficient=0.7, mass_kg=1000.0
-    )
-    np.testing.assert_allclose(
-        solar_radiation_pressure_acceleration(eclipsed, sun, radiation), 0.0
-    )
+    radiation = RadiationPressure(area_m2=2.5, reflection_coefficient=0.7, mass_kg=1000.0)
+    np.testing.assert_allclose(solar_radiation_pressure_acceleration(eclipsed, sun, radiation), 0.0)
 
 
 def test_conical_shadow_has_lit_umbra_and_penumbra_regions():

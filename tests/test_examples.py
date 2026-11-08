@@ -75,9 +75,7 @@ def test_download_data_files_example_writes_to_target_folder(tmp_path):
     source.write_text("example gravity\n", encoding="utf-8")
     expected_hash = hashlib.sha256(source.read_bytes()).hexdigest()
 
-    result = importlib.import_module(
-        "examples.download_data_files"
-    ).download_requested_files(
+    result = importlib.import_module("examples.download_data_files").download_requested_files(
         tmp_path / "target",
         gravity_url=source.as_uri(),
         gravity_filename="tiny.gfc",

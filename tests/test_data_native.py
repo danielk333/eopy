@@ -3,9 +3,16 @@ from datetime import datetime, timezone
 
 import numpy as np
 
-from eopy.data import DEFAULT_GRAVITY_MODEL_FILENAME, DEFAULT_GRAVITY_MODEL_URL, download_file, download_gravity_model, read_icgem_gfc, resolve_data_path
-from eopy.gravity import GravityField, central_gravity, gravity_acceleration, j2_acceleration
 from eopy import native
+from eopy.data import (
+    DEFAULT_GRAVITY_MODEL_FILENAME,
+    DEFAULT_GRAVITY_MODEL_URL,
+    download_file,
+    download_gravity_model,
+    read_icgem_gfc,
+    resolve_data_path,
+)
+from eopy.gravity import GravityField, central_gravity, gravity_acceleration, j2_acceleration
 
 
 def test_resolve_data_path_uses_env_override(tmp_path, monkeypatch):
@@ -21,11 +28,18 @@ def test_download_file_uses_atomic_cache_and_checksum(tmp_path):
     source.write_text("eopy data\n", encoding="utf-8")
     expected_hash = hashlib.sha256(source.read_bytes()).hexdigest()
 
-    out = download_file(source.as_uri(), "cached.txt", target_dir=tmp_path / "cache", sha256=expected_hash)
+    out = download_file(
+        source.as_uri(), "cached.txt", target_dir=tmp_path / "cache", sha256=expected_hash
+    )
 
     assert out.name == "cached.txt"
     assert out.read_text(encoding="utf-8") == "eopy data\n"
-    assert download_file(source.as_uri(), "cached.txt", target_dir=tmp_path / "cache", sha256=expected_hash) == out
+    assert (
+        download_file(
+            source.as_uri(), "cached.txt", target_dir=tmp_path / "cache", sha256=expected_hash
+        )
+        == out
+    )
 
 
 def test_default_gravity_download_url_is_eigen_6s4_v2(monkeypatch, tmp_path):

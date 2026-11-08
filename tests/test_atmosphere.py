@@ -5,7 +5,13 @@ import pymsis
 from spacecoords import frames as spacecoords_frames
 
 import eopy.atmosphere as atmosphere_module
-from eopy.atmosphere import AtmosphereConfig, CelestrakSpaceWeather, SolarActivity, density_dtm2000, density_msis
+from eopy.atmosphere import (
+    AtmosphereConfig,
+    CelestrakSpaceWeather,
+    SolarActivity,
+    density_dtm2000,
+    density_msis,
+)
 from eopy.dtm2000 import density_from_inputs
 from eopy.frames import ecef_to_geodetic_wgs84, interpolated_earth_orientation
 
@@ -82,9 +88,7 @@ def test_celestrak_space_weather_builds_msis_ap_history(tmp_path):
     path = tmp_path / "SW-All.csv"
     path.write_text("\n".join(rows), encoding="utf-8")
 
-    activity = CelestrakSpaceWeather.from_csv(path)(
-        datetime(2024, 7, 4, 7, 0, tzinfo=timezone.utc)
-    )
+    activity = CelestrakSpaceWeather.from_csv(path)(datetime(2024, 7, 4, 7, 0, tzinfo=timezone.utc))
 
     assert activity.f10 == 150.0
     assert activity.f10_mean == 145.0
@@ -101,9 +105,7 @@ def test_celestrak_space_weather_builds_dtm_kp_history(tmp_path):
     path = tmp_path / "SW-All.csv"
     path.write_text("\n".join(rows), encoding="utf-8")
 
-    activity = CelestrakSpaceWeather.from_csv(path)(
-        datetime(2024, 7, 4, 7, 0, tzinfo=timezone.utc)
-    )
+    activity = CelestrakSpaceWeather.from_csv(path)(datetime(2024, 7, 4, 7, 0, tzinfo=timezone.utc))
 
     assert activity.kp_3h == 4.3
     np.testing.assert_allclose(activity.kp_24h, np.mean([4.3, 4.2, 4.1, 3.8, 3.7, 3.6, 3.5, 3.4]))
@@ -118,8 +120,15 @@ def test_dtm2000_matches_original_reference_cases():
     ]
     for day, altitude, latitude, flux, expected in cases:
         actual = density_from_inputs(
-            day, altitude, 0.0, np.radians(latitude), 16.0 * np.pi / 12.0,
-            flux, flux, 0.0, 0.0,
+            day,
+            altitude,
+            0.0,
+            np.radians(latitude),
+            16.0 * np.pi / 12.0,
+            flux,
+            flux,
+            0.0,
+            0.0,
         )
         np.testing.assert_allclose(actual, expected, rtol=2e-14, atol=0.0)
 
@@ -133,9 +142,7 @@ def test_dtm2000_vector_api_uses_epoch_and_sun_geometry():
     sun = np.array([1.0e11, 0.0, 0.0])
     activity = SolarActivity(kp_3h=2.0, kp_24h=1.5)
 
-    density = density_dtm2000(
-        positions, activity, config, time_s=0.0, sun_position_m=sun
-    )
+    density = density_dtm2000(positions, activity, config, time_s=0.0, sun_position_m=sun)
 
     assert density.shape == (2,)
     assert np.all(np.isfinite(density))
@@ -177,3 +184,33 @@ def test_interpolated_earth_orientation_preserves_rotation_geometry():
     fixed = orientation.position_to_fixed(47.0, vector)
     recovered = orientation.vector_to_inertial(47.0, fixed)
     np.testing.assert_allclose(recovered, vector, rtol=0.0, atol=2e-9)
+
+
+def test_msis_storm_history_matches_public_api_and_fallback(monkeypatch):
+    position = np.array([6_778_000.0, 0.0, 0.0])
+    config = AtmosphereConfig(epoch=datetime(2024, 7, 4, 7, tzinfo=timezone.utc))
+    activity = SolarActivity(ap=np.array([4.0, 100.0, 80.0, 60.0, 40.0, 20.0, 10.0]))
+    expected = pymsis.calculate(
+        [config.epoch.replace(tzinfo=None)],
+        [0.0],
+        [0.0],
+        [(position[0] - 6_378_137.0) / 1000],
+        f107s=[activity.f10],
+        f107as=[activity.f10_mean],
+        aps=[activity.ap],
+        version=2.1,
+        geomagnetic_activity=-1,
+    )[0, pymsis.Variable.MASS_DENSITY]
+    np.testing.assert_allclose(density_msis(position, activity, config), expected, rtol=2e-6)
+    monkeypatch.setattr(atmosphere_module, "_low_level_msis21_available", lambda: False)
+    np.testing.assert_allclose(density_msis(position, activity, config), expected, rtol=2e-6)
+
+
+def test_weather_flux_uses_previous_day(tmp_path):
+    rows = ["DATE,AP1,AP2,AP3,AP4,AP5,AP6,AP7,AP8,AP_AVG,F10.7_OBS,F10.7_OBS_CENTER81"]
+    for day in range(1, 5):
+        rows.append(f"2024-07-0{day},4,4,4,4,4,4,4,4,4,{100 + day},145")
+    path = tmp_path / "weather.csv"
+    path.write_text("\n".join(rows))
+    activity = CelestrakSpaceWeather.from_csv(path)(datetime(2024, 7, 4, 7, tzinfo=timezone.utc))
+    assert activity.f10 == 103

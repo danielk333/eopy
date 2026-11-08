@@ -144,9 +144,7 @@ def test_j2_acceleration_matches_closed_form_reference_points():
     x, y, z = positions.T
     r2 = np.sum(positions * positions, axis=1)
     z2_r2 = z * z / r2
-    factor = (
-        1.5 * GravityField().j2 * EARTH_MU * EARTH_RADIUS**2 / (r2 * r2 * np.sqrt(r2))
-    )
+    factor = 1.5 * GravityField().j2 * EARTH_MU * EARTH_RADIUS**2 / (r2 * r2 * np.sqrt(r2))
     expected = np.column_stack(
         (
             factor * x * (5.0 * z2_r2 - 1.0),
@@ -155,9 +153,7 @@ def test_j2_acceleration_matches_closed_form_reference_points():
         )
     )
 
-    np.testing.assert_allclose(
-        j2_acceleration(positions), expected, rtol=1e-15, atol=0.0
-    )
+    np.testing.assert_allclose(j2_acceleration(positions), expected, rtol=1e-15, atol=0.0)
 
 
 def test_drag_propagation_reduces_specific_orbital_energy():
