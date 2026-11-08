@@ -11,7 +11,7 @@ Example running:
 ```
     pytest tests/precision_orbit/test_precision_orbit.py --plot \
             --precision-orbit-file ~/data/eopy/sentinel_2b_20240704.eof \
-            --gravity-model-file ~/data/eopy/EIGEN-6S4\%20\(v2\).gfc \
+            --gravity-model-file ~/data/eopy/EIGEN-6S4_v2.gfc \
             --space-weather-file ~/data/eopy/SW-All.csv
 ```
 """
