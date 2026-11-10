@@ -24,8 +24,13 @@ Issues = "https://gitlab.irf.se/danielk/eopy/-/issues"
 
 [project.optional-dependencies]
 tests = ["pytest>=8", "matplotlib>=3.8", "sgp4>=2.23"]
-develop = ["eopy-orbits[tests]", "ruff>=0.9", "mypy>=1.15", "build>=1.2", "twine>=6"]
-examples = ["matplotlib>=3.8", "sgp4>=2.23"]
+develop = ["eopy-orbits[tests,examples]", "ruff>=0.9", "mypy>=1.15", "build>=1.2", "twine>=6"]
+examples = [
+    "cartopy>=0.23",
+    "matplotlib>=3.8",
+    "pyerfa>=2.0",
+    "sgp4>=2.23",
+]
 
 [tool.scikit-build]
 wheel.packages = ["eopy"]

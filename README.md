@@ -138,6 +138,11 @@ or local gravity model path is supplied.
 Use Python 3.11 or newer. Linux x86_64 is the initial binary distribution target.
 Install the `eopy-orbits` distribution and use `import eopy` in Python.
 
+Install the additional dependencies for plotting, country borders, and the SGP4
+comparison with `pip install 'eopy-orbits[examples]'`. From a checkout,
+use `pip install '.[examples]'`. The `develop` extra includes both
+the example and test dependencies.
+
 ```bash
 python -m pip install eopy-orbits
 # From a checkout, with a C++17 compiler and CMake available:
